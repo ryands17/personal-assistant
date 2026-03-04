@@ -518,7 +518,6 @@ function cmdHelp(): void {
   console.log(`    ${C.coral("/copy")}                 copy last response`);
   console.log(`    ${C.coral("/status")}               daemon health check`);
   console.log(`    ${C.coral("/restart")}              restart daemon`);
-  console.log(`    ${C.coral("/copy")}                copy last response`);
   console.log(`    ${C.coral("/clear")}                clear screen`);
   console.log(`    ${C.coral("/quit")}                 exit`);
   console.log();

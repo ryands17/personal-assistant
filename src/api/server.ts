@@ -101,11 +101,28 @@ app.post("/cancel", async (_req: Request, res: Response) => {
 app.get("/model", (_req: Request, res: Response) => {
   res.json({ model: config.copilotModel });
 });
-app.post("/model", (req: Request, res: Response) => {
+app.post("/model", async (req: Request, res: Response) => {
   const { model } = req.body as { model?: string };
   if (!model || typeof model !== "string") {
     res.status(400).json({ error: "Missing 'model' in request body" });
     return;
+  }
+  // Validate against available models before persisting
+  try {
+    const { getClient } = await import("../copilot/client.js");
+    const client = await getClient();
+    const models = await client.listModels();
+    const match = models.find((m) => m.id === model);
+    if (!match) {
+      const suggestions = models
+        .filter((m) => m.id.includes(model) || m.id.toLowerCase().includes(model.toLowerCase()))
+        .map((m) => m.id);
+      const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}?` : "";
+      res.status(400).json({ error: `Model '${model}' not found.${hint}` });
+      return;
+    }
+  } catch {
+    // If we can't validate (client not ready), allow the switch — it'll fail on next message if wrong
   }
   const previous = config.copilotModel;
   config.copilotModel = model;
@@ -154,10 +171,17 @@ app.post("/send-photo", async (req: Request, res: Response) => {
 });
 
 export function startApiServer(): Promise<void> {
-  return new Promise((resolve) => {
-    app.listen(config.apiPort, "127.0.0.1", () => {
+  return new Promise((resolve, reject) => {
+    const server = app.listen(config.apiPort, "127.0.0.1", () => {
       console.log(`[max] HTTP API listening on http://127.0.0.1:${config.apiPort}`);
       resolve();
+    });
+    server.on("error", (err: NodeJS.ErrnoException) => {
+      if (err.code === "EADDRINUSE") {
+        reject(new Error(`Port ${config.apiPort} is already in use. Is another Max instance running?`));
+      } else {
+        reject(err);
+      }
     });
   });
 }

@@ -46,6 +46,23 @@ export function createBot(): Bot {
   bot.command("model", async (ctx) => {
     const arg = ctx.match?.trim();
     if (arg) {
+      // Validate against available models before persisting
+      try {
+        const { getClient } = await import("../copilot/client.js");
+        const client = await getClient();
+        const models = await client.listModels();
+        const match = models.find((m) => m.id === arg);
+        if (!match) {
+          const suggestions = models
+            .filter((m) => m.id.includes(arg) || m.id.toLowerCase().includes(arg.toLowerCase()))
+            .map((m) => m.id);
+          const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}?` : "";
+          await ctx.reply(`Model '${arg}' not found.${hint}`);
+          return;
+        }
+      } catch {
+        // If validation fails (client not ready), allow the switch — will fail on next message if wrong
+      }
       const previous = config.copilotModel;
       config.copilotModel = arg;
       persistModel(arg);

@@ -18,7 +18,9 @@ This restriction does NOT apply to:
 - Any files outside the Max installation directory
 `;
 
-  return `You are Max, a personal AI assistant for developers running 24/7 on the user's machine (Linux). You are Burke Holland's always-on assistant.
+  const osName = process.platform === "darwin" ? "macOS" : process.platform === "win32" ? "Windows" : "Linux";
+
+  return `You are Max, a personal AI assistant for developers running 24/7 on the user's machine (${osName}). You are Burke Holland's always-on assistant.
 
 ## Your Architecture
 

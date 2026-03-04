@@ -61,16 +61,31 @@ From Telegram or the TUI, just send natural language:
 | `max start` | Start the Max daemon |
 | `max tui` | Connect to the daemon via terminal |
 | `max setup` | Interactive first-run configuration |
+| `max update` | Check for and install updates |
 | `max help` | Show available commands |
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--self-edit` | Allow Max to modify his own source code (use with `max start`) |
 
 ### TUI commands
 
 | Command | Description |
 |---------|-------------|
-| `/sessions` | List worker sessions |
+| `/model [name]` | Show or switch the current model |
+| `/memory` | Show stored memories |
+| `/skills` | List installed skills |
+| `/workers` | List active worker sessions |
+| `/copy` | Copy last response to clipboard |
 | `/status` | Daemon health check |
+| `/restart` | Restart the daemon |
+| `/cancel` | Cancel the current in-flight message |
+| `/clear` | Clear the screen |
 | `/help` | Show help |
 | `/quit` | Exit the TUI |
+| `Escape` | Cancel a running response |
 
 ## How it Works
 
