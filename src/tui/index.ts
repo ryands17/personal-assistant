@@ -181,6 +181,29 @@ function flushStreamState(): void {
   streamIsFirstLine = true;
 }
 
+// ── Thinking indicator ────────────────────────────────────
+let thinkingTimer: ReturnType<typeof setInterval> | undefined;
+let thinkingFrame = 0;
+const thinkingFrames = ["thinking", "thinking.", "thinking..", "thinking..."];
+
+function startThinking(): void {
+  stopThinking();
+  thinkingFrame = 0;
+  process.stdout.write(`\n  ${C.cyan("MAX")}     ${C.dim(thinkingFrames[0])}`);
+  thinkingTimer = setInterval(() => {
+    thinkingFrame = (thinkingFrame + 1) % thinkingFrames.length;
+    process.stdout.write(`\r\x1b[K  ${C.cyan("MAX")}     ${C.dim(thinkingFrames[thinkingFrame])}`);
+  }, 400);
+}
+
+function stopThinking(): void {
+  if (thinkingTimer) {
+    clearInterval(thinkingTimer);
+    thinkingTimer = undefined;
+    process.stdout.write(`\r\x1b[K`);
+  }
+}
+
 // ── State ─────────────────────────────────────────────────
 let connectionId: string | undefined;
 let isStreaming = false;
@@ -291,6 +314,7 @@ function connectSSE(): void {
               connectionId = event.connectionId;
             } else if (event.type === "delta") {
               if (!isStreaming) {
+                stopThinking();
                 isStreaming = true;
                 streamedContent = "";
                 streamLineBuffer = "";
@@ -306,6 +330,7 @@ function connectSSE(): void {
                 streamedContent = full;
               }
             } else if (event.type === "cancelled") {
+              stopThinking();
               isStreaming = false;
               streamedContent = "";
               streamLineBuffer = "";
@@ -321,6 +346,7 @@ function connectSSE(): void {
                 process.stdout.write("\n\n");
               } else {
                 // Proactive/background message — render with label
+                stopThinking();
                 lastResponse = event.content;
                 const rendered = renderMarkdown(event.content);
                 process.stdout.write("\n");
@@ -337,12 +363,14 @@ function connectSSE(): void {
     });
 
     res.on("end", () => {
+      stopThinking();
       console.log(C.yellow("\n    ⚠ disconnected — reconnecting..."));
       isStreaming = false;
       setTimeout(connectSSE, 2000);
     });
 
     res.on("error", (err) => {
+      stopThinking();
       console.error(C.red(`\n    ✗ connection error — retrying...`));
       isStreaming = false;
       setTimeout(connectSSE, 3000);
@@ -374,6 +402,7 @@ function sendMessage(prompt: string): void {
       res.on("data", (chunk) => (data += chunk));
       res.on("end", () => {
         if (res.statusCode !== 200) {
+          stopThinking();
           console.error(C.red(`  Error: ${data}`));
           rl.prompt();
         }
@@ -382,6 +411,7 @@ function sendMessage(prompt: string): void {
   );
 
   req.on("error", (err) => {
+    stopThinking();
     console.error(C.red(`  Failed to send: ${err.message}`));
     rl.prompt();
   });
@@ -463,6 +493,7 @@ function apiDelete(path: string, cb: (data: any) => void): void {
 }
 
 function sendCancel(): void {
+  stopThinking();
   const url = new URL("/cancel", API_BASE);
   const req = http.request(url, { method: "POST", headers: authHeaders() }, (res) => {
     let data = "";
@@ -735,6 +766,7 @@ setTimeout(() => {
 
     // Send to orchestrator
     sendMessage(trimmed);
+    startThinking();
   });
 
   rl.on("close", () => {
