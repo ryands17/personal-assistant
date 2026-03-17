@@ -6,14 +6,41 @@ import { loadMcpConfig } from "./mcp-config.js";
 import { getSkillDirectories } from "./skills.js";
 import { resetClient } from "./client.js";
 import { logConversation, getState, setState, deleteState, getMemorySummary, getRecentConversation } from "../store/db.js";
-import { SESSIONS_DIR } from "../paths.js";
+import { SESSIONS_DIR, SOUL_PATH } from "../paths.js";
 import { resolveModel, type Tier, type RouteResult } from "./router.js";
+import { readFileSync, existsSync } from "fs";
 
 const MAX_RETRIES = 3;
 const RECONNECT_DELAYS_MS = [1_000, 3_000, 10_000];
 const HEALTH_CHECK_INTERVAL_MS = 30_000;
 
 const ORCHESTRATOR_SESSION_KEY = "orchestrator_session_id";
+
+/**
+ * Read SOUL.md and return a sanitised string of known fields only.
+ * Parses bot name, user name, timezone, and personality — no raw content
+ * is ever injected as system instructions (guards against prompt injection).
+ */
+function readSoul(): string | undefined {
+  try {
+    if (!existsSync(SOUL_PATH)) return undefined;
+    const raw = readFileSync(SOUL_PATH, "utf-8");
+    const field = (name: string): string => {
+      const m = raw.match(new RegExp(`\\*\\*${name}\\*\\*:\\s*(.+)`));
+      return m ? m[1].trim().slice(0, 200) : "";
+    };
+    const botName = field("Bot name");
+    const userName = field("User name");
+    const timezone = field("Timezone");
+    const personality = field("Personality");
+    if (!botName && !userName && !timezone && !personality) return undefined;
+    return `Bot name: ${botName}\nUser name: ${userName}\nTimezone: ${timezone}\nPersonality: ${personality}`;
+  } catch {
+    console.warn("[max] Could not read SOUL.md — proceeding without personalisation");
+    return undefined;
+  }
+}
+
 
 export type MessageSource =
   | { type: "telegram"; chatId: number; messageId: number }
@@ -163,6 +190,7 @@ async function createOrResumeSession(): Promise<CopilotSession> {
   const client = await ensureClient();
   const { tools, mcpServers, skillDirectories } = getSessionConfig();
   const memorySummary = getMemorySummary();
+  const soulContent = readSoul();
 
   const infiniteSessions = {
     enabled: true,
@@ -180,7 +208,7 @@ async function createOrResumeSession(): Promise<CopilotSession> {
         configDir: SESSIONS_DIR,
         streaming: true,
         systemMessage: {
-          content: getOrchestratorSystemMessage(memorySummary || undefined, { selfEditEnabled: config.selfEditEnabled }),
+          content: getOrchestratorSystemMessage(memorySummary || undefined, { selfEditEnabled: config.selfEditEnabled, soulContent }),
         },
         tools,
         mcpServers,
@@ -204,7 +232,7 @@ async function createOrResumeSession(): Promise<CopilotSession> {
     configDir: SESSIONS_DIR,
     streaming: true,
     systemMessage: {
-      content: getOrchestratorSystemMessage(memorySummary || undefined, { selfEditEnabled: config.selfEditEnabled }),
+      content: getOrchestratorSystemMessage(memorySummary || undefined, { selfEditEnabled: config.selfEditEnabled, soulContent }),
     },
     tools,
     mcpServers,
@@ -212,8 +240,6 @@ async function createOrResumeSession(): Promise<CopilotSession> {
     onPermissionRequest: approveAll,
     infiniteSessions,
   });
-
-  // Persist the session ID for future restarts
   setState(ORCHESTRATOR_SESSION_KEY, session.sessionId);
   console.log(`[max] Created orchestrator session ${session.sessionId.slice(0, 8)}…`);
 

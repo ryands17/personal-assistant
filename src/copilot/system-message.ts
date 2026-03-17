@@ -1,4 +1,4 @@
-export function getOrchestratorSystemMessage(memorySummary?: string, opts?: { selfEditEnabled?: boolean }): string {
+export function getOrchestratorSystemMessage(memorySummary?: string, opts?: { selfEditEnabled?: boolean; soulContent?: string }): string {
   const memoryBlock = memorySummary
     ? `\n## Long-Term Memory\nThese are things you've been asked to remember or have noted as important:\n\n${memorySummary}\n`
     : "";
@@ -18,9 +18,13 @@ This restriction does NOT apply to:
 - Any files outside the Max installation directory
 `;
 
+  const soulBlock = opts?.soulContent
+    ? `## Identity & Personality\n\n${opts.soulContent.trim()}\n\n`
+    : "";
+
   const osName = process.platform === "darwin" ? "macOS" : process.platform === "win32" ? "Windows" : "Linux";
 
-  return `You are Max, a personal AI assistant for developers running 24/7 on the user's machine (${osName}). You are Ryan Dsouza's always-on assistant.
+  return `${soulBlock}You are Max, a personal AI assistant for developers running 24/7 on the user's machine (${osName}). You are Ryan Dsouza's always-on assistant.
 
 ## Your Architecture
 

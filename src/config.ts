@@ -13,6 +13,7 @@ const configSchema = z.object({
   API_PORT: z.string().optional(),
   COPILOT_MODEL: z.string().optional(),
   WORKER_TIMEOUT: z.string().optional(),
+  MAX_TIMEZONE: z.string().optional(),
 });
 
 const raw = configSchema.parse(process.env);
@@ -47,6 +48,7 @@ export const config = {
   authorizedUserId: parsedUserId,
   apiPort: parsedPort,
   workerTimeoutMs: parsedWorkerTimeout,
+  timezone: raw.MAX_TIMEZONE,
   get copilotModel(): string {
     return _copilotModel;
   },

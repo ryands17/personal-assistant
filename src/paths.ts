@@ -26,6 +26,9 @@ export const TUI_DEBUG_LOG_PATH = join(MAX_HOME, "tui-debug.log");
 /** Path to the API bearer token file */
 export const API_TOKEN_PATH = join(MAX_HOME, "api-token");
 
+/** Path to the SOUL.md personalisation file */
+export const SOUL_PATH = join(MAX_HOME, "SOUL.md");
+
 /** Ensure ~/.max/ exists */
 export function ensureMaxHome(): void {
   mkdirSync(MAX_HOME, { recursive: true });

@@ -1,7 +1,7 @@
 import * as readline from "readline";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { CopilotClient } from "@github/copilot-sdk";
-import { ensureMaxHome, ENV_PATH, MAX_HOME } from "./paths.js";
+import { ensureMaxHome, ENV_PATH, MAX_HOME, SOUL_PATH } from "./paths.js";
 
 const BOLD = "\x1b[1m";
 const DIM = "\x1b[2m";
@@ -70,6 +70,21 @@ async function askPicker(rl: readline.Interface, label: string, options: { id: s
   const num = parseInt(input.trim(), 10);
   if (num >= 1 && num <= options.length) return options[num - 1].id;
   return options[defaultIdx].id;
+}
+
+/** Parse a field from SOUL.md like `**Field**: value` → value */
+function parseSoulField(content: string, field: string): string {
+  const match = content.match(new RegExp(`\\*\\*${field}\\*\\*:\\s*(.+)`));
+  return match ? match[1].trim() : "";
+}
+
+/** Get the system default timezone */
+function systemTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone;
+  } catch {
+    return "UTC";
+  }
 }
 
 async function main(): Promise<void> {
@@ -248,6 +263,30 @@ ${BOLD}╔═══════════════════════�
     console.log(`\n${DIM}  Skipping Google. You can always set it up later with: max setup${RESET}\n`);
   }
 
+  // ── Personalise Max ──────────────────────────────────────
+  console.log(`\n${BOLD}━━━ Personalise Max ━━━${RESET}\n`);
+  console.log(`Tell Max a bit about yourself so it can address you properly and match your style.`);
+  console.log();
+
+  // Load existing SOUL.md values as defaults
+  let existingSoul = "";
+  if (existsSync(SOUL_PATH)) {
+    existingSoul = readFileSync(SOUL_PATH, "utf-8");
+  }
+  const defaultBotName = parseSoulField(existingSoul, "Bot name") || "Max";
+  const defaultUserName = parseSoulField(existingSoul, "User name") || "Ryan";
+  const defaultTimezone = parseSoulField(existingSoul, "Timezone") || existing.MAX_TIMEZONE || systemTimezone();
+  const defaultPersonality = parseSoulField(existingSoul, "Personality") || "Be helpful, concise, and direct";
+
+  const botName = (await ask(rl, `  What should I call myself? ${DIM}(default: ${defaultBotName})${RESET}: `)).trim() || defaultBotName;
+  const userName = (await ask(rl, `  What should I call you? ${DIM}(default: ${defaultUserName})${RESET}: `)).trim() || defaultUserName;
+  const timezone = (await ask(rl, `  Your timezone? ${DIM}(default: ${defaultTimezone})${RESET}: `)).trim() || defaultTimezone;
+  const personality = (await ask(rl, `  How should I behave? ${DIM}(default: ${defaultPersonality})${RESET}: `)).trim() || defaultPersonality;
+
+  const soulContent = `# ${botName}'s Soul\n\n**Bot name**: ${botName}\n**User name**: ${userName}\n**Timezone**: ${timezone}\n**Personality**: ${personality}\n`;
+  writeFileSync(SOUL_PATH, soulContent);
+  console.log(`\n${GREEN}  ✓ Personality saved — ${botName} will remember this.${RESET}\n`);
+
   // ── Model picker ─────────────────────────────────────────
   console.log(`\n${BOLD}━━━ Default Model ━━━${RESET}\n`);
   console.log(`${DIM}Fetching available models from Copilot...${RESET}`);
@@ -275,6 +314,7 @@ ${BOLD}╔═══════════════════════�
   if (userId) lines.push(`AUTHORIZED_USER_ID=${userId}`);
   lines.push(`API_PORT=${apiPort}`);
   lines.push(`COPILOT_MODEL=${model}`);
+  lines.push(`MAX_TIMEZONE=${timezone}`);
 
   writeFileSync(ENV_PATH, lines.join("\n") + "\n");
 
