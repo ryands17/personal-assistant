@@ -1,12 +1,17 @@
 import { Bot, type Context } from "grammy";
 import { config, persistModel } from "../config.js";
-import { sendToOrchestrator, cancelCurrentMessage, getWorkers, getLastRouteResult } from "../copilot/orchestrator.js";
+import { sendToOrchestrator, cancelCurrentMessage, getWorkers, getLastRouteResult, destroyGroupSession } from "../copilot/orchestrator.js";
 import { chunkMessage, toTelegramMarkdown } from "./formatter.js";
-import { searchMemories } from "../store/db.js";
+import { searchMemories, isGroupAllowed, addGroupAllowlist, removeGroupAllowlist, getGroupAllowlist, setGroupGoal, getGroupGoal } from "../store/db.js";
 import { listSkills } from "../copilot/skills.js";
 import { restartDaemon } from "../daemon.js";
 
 let bot: Bot | undefined;
+
+/** Returns true if a message is from a group/supergroup. */
+function isGroupChat(ctx: Context): boolean {
+  return ctx.chat?.type === "group" || ctx.chat?.type === "supergroup";
+}
 
 export function createBot(): Bot {
   if (!config.telegramBotToken) {
@@ -17,18 +22,42 @@ export function createBot(): Bot {
   }
   bot = new Bot(config.telegramBotToken);
 
-  // Auth middleware — only allow the authorized user
+  // ── Handle bot being removed from a group — must be registered BEFORE auth middleware ──
+  bot.on("my_chat_member", async (ctx) => {
+    const newStatus = ctx.myChatMember.new_chat_member.status;
+    const chatId = ctx.chat.id;
+    if (newStatus === "left" || newStatus === "kicked") {
+      destroyGroupSession(chatId);
+      console.log(`[max] Bot removed from group ${chatId}, session destroyed`);
+    }
+  });
+
+  // Auth middleware
   bot.use(async (ctx, next) => {
-    if (config.authorizedUserId !== undefined && ctx.from?.id !== config.authorizedUserId) {
-      return; // Silently ignore unauthorized users
+    const fromId = ctx.from?.id;
+    if (fromId === undefined) return;
+
+    if (isGroupChat(ctx)) {
+      // In groups: check per-group allowlist (owner is always allowed)
+      const chatId = ctx.chat!.id;
+      if (!isGroupAllowed(chatId, fromId, config.authorizedUserId!)) {
+        return; // Silently ignore non-allowed users
+      }
+    } else {
+      // In DMs: only the authorized user
+      if (config.authorizedUserId !== undefined && fromId !== config.authorizedUserId) {
+        return;
+      }
     }
     await next();
   });
 
   // /start and /help
   bot.command("start", (ctx) => ctx.reply("Max is online. Send me anything."));
-  bot.command("help", (ctx) =>
-    ctx.reply(
+  bot.command("help", async (ctx) => {
+    const isGroup = isGroupChat(ctx);
+    const groupCommands = isGroup ? "\n/allow <userId> — Add user to this group's allowlist\n/deny <userId> — Remove user from allowlist\n/allowlist — List allowed users\n/goal — Show this group's goal" : "";
+    await ctx.reply(
       "I'm Max, your AI daemon.\n\n" +
         "Just send me a message and I'll handle it.\n\n" +
         "Commands:\n" +
@@ -39,17 +68,19 @@ export function createBot(): Bot {
         "/skills — List installed skills\n" +
         "/workers — List active worker sessions\n" +
         "/restart — Restart Max\n" +
-        "/help — Show this help"
-    )
-  );
+        "/help — Show this help" +
+        groupCommands
+    );
+  });
   bot.command("cancel", async (ctx) => {
+    if (ctx.from?.id !== config.authorizedUserId) return;
     const cancelled = await cancelCurrentMessage();
     await ctx.reply(cancelled ? "⛔ Cancelled." : "Nothing to cancel.");
   });
   bot.command("model", async (ctx) => {
+    if (ctx.from?.id !== config.authorizedUserId) return;
     const arg = ctx.match?.trim();
     if (arg) {
-      // Validate against available models before persisting
       try {
         const { getClient } = await import("../copilot/client.js");
         const client = await getClient();
@@ -64,7 +95,7 @@ export function createBot(): Bot {
           return;
         }
       } catch {
-        // If validation fails (client not ready), allow the switch — will fail on next message if wrong
+        // allow anyway
       }
       const previous = config.copilotModel;
       config.copilotModel = arg;
@@ -75,7 +106,8 @@ export function createBot(): Bot {
     }
   });
   bot.command("memory", async (ctx) => {
-    const memories = searchMemories(undefined, undefined, 50);
+    const chatId = isGroupChat(ctx) ? ctx.chat!.id : undefined;
+    const memories = searchMemories(undefined, undefined, 50, chatId);
     if (memories.length === 0) {
       await ctx.reply("No memories stored.");
     } else {
@@ -102,6 +134,7 @@ export function createBot(): Bot {
     }
   });
   bot.command("restart", async (ctx) => {
+    if (ctx.from?.id !== config.authorizedUserId) return;
     await ctx.reply("⏳ Restarting Max...");
     setTimeout(() => {
       restartDaemon().catch((err) => {
@@ -110,13 +143,95 @@ export function createBot(): Bot {
     }, 500);
   });
 
+  // ── Group management commands (owner-only) ──────────────────────────────
+  bot.command("goal", async (ctx) => {
+    if (!isGroupChat(ctx)) {
+      await ctx.reply("This command only works in groups.");
+      return;
+    }
+    const chatId = ctx.chat!.id;
+    const goal = getGroupGoal(chatId);
+    await ctx.reply(goal ? `📌 Group goal:\n\n${goal}` : "No goal set for this group. Send the first message to set one.");
+  });
+
+  bot.command("allow", async (ctx) => {
+    if (!isGroupChat(ctx)) {
+      await ctx.reply("This command only works in groups.");
+      return;
+    }
+    if (ctx.from?.id !== config.authorizedUserId) {
+      return; // Only owner can manage allowlist
+    }
+    const arg = ctx.match?.trim();
+    if (!arg) {
+      await ctx.reply("Usage: /allow <userId>");
+      return;
+    }
+    const userId = parseInt(arg, 10);
+    if (isNaN(userId) || userId <= 0) {
+      await ctx.reply("Please provide a valid numeric user ID.");
+      return;
+    }
+    addGroupAllowlist(ctx.chat!.id, userId);
+    await ctx.reply(`✅ User ${userId} added to this group's allowlist.`);
+  });
+
+  bot.command("deny", async (ctx) => {
+    if (!isGroupChat(ctx)) {
+      await ctx.reply("This command only works in groups.");
+      return;
+    }
+    if (ctx.from?.id !== config.authorizedUserId) {
+      return;
+    }
+    const arg = ctx.match?.trim();
+    if (!arg) {
+      await ctx.reply("Usage: /deny <userId>");
+      return;
+    }
+    const userId = parseInt(arg, 10);
+    if (isNaN(userId) || userId <= 0) {
+      await ctx.reply("Please provide a valid numeric user ID.");
+      return;
+    }
+    const removed = removeGroupAllowlist(ctx.chat!.id, userId);
+    await ctx.reply(removed ? `🚫 User ${userId} removed from allowlist.` : `User ${userId} was not in the allowlist.`);
+  });
+
+  bot.command("allowlist", async (ctx) => {
+    if (!isGroupChat(ctx)) {
+      await ctx.reply("This command only works in groups.");
+      return;
+    }
+    if (ctx.from?.id !== config.authorizedUserId) {
+      return;
+    }
+    const chatId = ctx.chat!.id;
+    const list = getGroupAllowlist(chatId);
+    const ownerLine = `• ${config.authorizedUserId} (owner — always allowed)`;
+    if (list.length === 0) {
+      await ctx.reply(`Allowlist for this group:\n${ownerLine}\n\nNo additional users added.`);
+    } else {
+      const lines = list.map((u) => `• ${u.userId}${u.username ? ` (@${u.username})` : ""}`);
+      await ctx.reply(`Allowlist for this group:\n${ownerLine}\n${lines.join("\n")}`);
+    }
+  });
+
   // Handle all text messages
   bot.on("message:text", async (ctx) => {
     const chatId = ctx.chat.id;
     const userMessageId = ctx.message.message_id;
     const replyParams = { message_id: userMessageId };
+    const isGroup = isGroupChat(ctx);
 
-    // Show "typing..." indicator, repeat every 4s while processing
+    // For new groups with no goal yet, set the first message as the goal
+    if (isGroup && !getGroupGoal(chatId)) {
+      const firstMessage = ctx.message.text;
+      setGroupGoal(chatId, firstMessage.slice(0, 500));
+      console.log(`[max] Set group goal for ${chatId}: ${firstMessage.slice(0, 80)}…`);
+    }
+
+    // Show "typing..." indicator
     let typingInterval: ReturnType<typeof setInterval> | undefined;
     const startTyping = () => {
       void ctx.replyWithChatAction("typing").catch(() => {});
@@ -139,19 +254,17 @@ export function createBot(): Bot {
       (text: string, done: boolean) => {
         if (done) {
           stopTyping();
-          // Send final message — use chunking for long responses, reply-quote original
           void (async () => {
-            // Append model indicator
             const routeResult = getLastRouteResult();
             let indicatorSuffix = "";
-            if (routeResult) {
+            if (routeResult && !isGroup) {
               indicatorSuffix = routeResult.routerMode === "auto"
                 ? `\n\n_⚡ auto · ${routeResult.model}_`
                 : `\n\n_${routeResult.model}_`;
             }
             const formatted = toTelegramMarkdown(text) + indicatorSuffix;
             const chunks = chunkMessage(formatted);
-            const fallbackText = routeResult
+            const fallbackText = routeResult && !isGroup
               ? text + (routeResult.routerMode === "auto"
                   ? `\n\n⚡ auto · ${routeResult.model}`
                   : `\n\n${routeResult.model}`)
@@ -192,6 +305,8 @@ export async function startBot(): Promise<void> {
   console.log("[max] Telegram bot starting...");
   bot.start({
     onStart: () => console.log("[max] Telegram bot connected"),
+    // Subscribe to chat member updates so we know when bot is removed from groups
+    allowed_updates: ["message", "my_chat_member"],
   }).catch((err: any) => {
     if (err?.error_code === 401) {
       console.error("[max] ⚠️ Telegram bot token is invalid or expired. Run 'max setup' and re-enter your bot token from @BotFather.");

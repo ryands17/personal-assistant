@@ -1,4 +1,4 @@
-export function getOrchestratorSystemMessage(memorySummary?: string, opts?: { selfEditEnabled?: boolean; soulContent?: string }): string {
+export function getOrchestratorSystemMessage(memorySummary?: string, opts?: { selfEditEnabled?: boolean; soulContent?: string; groupGoal?: string }): string {
   const memoryBlock = memorySummary
     ? `\n## Long-Term Memory\nThese are things you've been asked to remember or have noted as important:\n\n${memorySummary}\n`
     : "";
@@ -22,9 +22,13 @@ This restriction does NOT apply to:
     ? `## Identity & Personality\n\n${opts.soulContent.trim()}\n\n`
     : "";
 
+  const groupGoalBlock = opts?.groupGoal
+    ? `## Group Goal\n\n${opts.groupGoal.trim()}\n\nThis is a group conversation. Focus your assistance on this goal. Keep responses relevant to it.\n\n`
+    : "";
+
   const osName = process.platform === "darwin" ? "macOS" : process.platform === "win32" ? "Windows" : "Linux";
 
-  return `${soulBlock}You are Max, a personal AI assistant for developers running 24/7 on the user's machine (${osName}). You are Ryan Dsouza's always-on assistant.
+  return `${soulBlock}${groupGoalBlock}You are Max, a personal AI assistant for developers running 24/7 on the user's machine (${osName}). You are Ryan Dsouza's always-on assistant.
 
 ## Your Architecture
 

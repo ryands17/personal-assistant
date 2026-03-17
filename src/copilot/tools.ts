@@ -43,15 +43,22 @@ export interface WorkerInfo {
   startedAt?: number;
   /** Channel that created this worker — completions route back here. */
   originChannel?: "telegram" | "tui";
+  /** Group chatId that created this worker (negative int) or undefined for DM. */
+  originChatId?: number;
 }
 
 export interface ToolDeps {
   client: CopilotClient;
   workers: Map<string, WorkerInfo>;
   onWorkerComplete: (name: string, result: string) => void;
+  /** chatId for group sessions; undefined = DM */
+  chatId?: number;
+  /** Session key used to resolve the current source channel for worker attribution. */
+  sessionKey: string;
 }
 
 export function createTools(deps: ToolDeps): Tool<any>[] {
+  const { chatId } = deps;
   return [
     defineTool("create_worker_session", {
       description:
@@ -94,7 +101,8 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
           session,
           workingDir: args.working_dir,
           status: "idle",
-          originChannel: getCurrentSourceChannel(),
+          originChannel: getCurrentSourceChannel(deps.sessionKey),
+          originChatId: deps.chatId,
         };
         deps.workers.set(args.name, worker);
 
@@ -319,7 +327,8 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
             session,
             workingDir: "(attached)",
             status: "idle",
-            originChannel: getCurrentSourceChannel(),
+            originChannel: getCurrentSourceChannel(deps.sessionKey),
+            originChatId: deps.chatId,
           };
           deps.workers.set(args.name, worker);
 
@@ -487,7 +496,7 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
         source: z.enum(["user", "auto"]).optional().describe("'user' if explicitly asked to remember, 'auto' if Max detected it (default: 'user')"),
       }),
       handler: async (args) => {
-        const id = addMemory(args.category, args.content, args.source || "user");
+        const id = addMemory(args.category, args.content, args.source || "user", chatId);
         return `Remembered (#${id}, ${args.category}): "${args.content}"`;
       },
     }),
@@ -503,7 +512,7 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
           .describe("Optional: filter by category"),
       }),
       handler: async (args) => {
-        const results = searchMemories(args.keyword, args.category);
+        const results = searchMemories(args.keyword, args.category, 20, chatId);
         if (results.length === 0) {
           return "No matching memories found.";
         }
@@ -523,7 +532,7 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
         memory_id: z.number().int().describe("The memory ID to remove (from recall results)"),
       }),
       handler: async (args) => {
-        const removed = removeMemory(args.memory_id);
+        const removed = removeMemory(args.memory_id, deps.chatId);
         return removed
           ? `Memory #${args.memory_id} forgotten.`
           : `Memory #${args.memory_id} not found — it may have already been removed.`;
