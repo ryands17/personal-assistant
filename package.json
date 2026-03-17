@@ -1,5 +1,5 @@
 {
-  "name": "heymax",
+  "name": "personal-assistant",
   "version": "1.1.0",
   "description": "Max — a personal AI assistant for developers, built on the GitHub Copilot SDK",
   "bin": {
@@ -27,15 +27,15 @@
     "ai",
     "cli"
   ],
-  "author": "Burke Holland",
+  "author": "Ryan Dsouza",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/burkeholland/max.git"
+    "url": "https://github.com/ryands17/personal-assistant.git"
   },
-  "homepage": "https://github.com/burkeholland/max#readme",
+  "homepage": "https://github.com/ryands17/personal-assistant#readme",
   "bugs": {
-    "url": "https://github.com/burkeholland/max/issues"
+    "url": "https://github.com/ryands17/personal-assistant/issues"
   },
   "type": "module",
   "dependencies": {

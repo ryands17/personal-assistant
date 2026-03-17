@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Max installer — https://github.com/burkeholland/max
-# Usage: curl -fsSL https://raw.githubusercontent.com/burkeholland/max/main/install.sh | bash
+# Max installer — https://github.com/ryands17/personal-assistant
+# Usage: curl -fsSL https://raw.githubusercontent.com/ryands17/personal-assistant/main/install.sh | bash
 # Dev:   ./install.sh --dev  (skips npm install, runs setup from local source)
 
 DEV_MODE=false
@@ -82,8 +82,8 @@ if [ "$DEV_MODE" = true ]; then
   echo ""
   node dist/setup.js < /dev/tty
 else
-  info "Installing heymax..."
-  npm install -g heymax
+  info "Installing personal-assistant..."
+  npm install -g personal-assistant
   echo ""
   success "✅ Max installed successfully!"
   echo ""

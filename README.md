@@ -5,13 +5,13 @@ AI orchestrator powered by [Copilot SDK](https://github.com/github/copilot-sdk) 
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/burkeholland/max/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ryands17/personal-assistant/main/install.sh | bash
 ```
 
 Or install directly with npm:
 
 ```bash
-npm install -g heymax
+npm install
 ```
 
 ## Quick Start
@@ -115,7 +115,7 @@ Telegram ──→ Max Daemon ←── TUI
 
 ```bash
 # Clone and install
-git clone https://github.com/burkeholland/max.git
+git clone https://github.com/ryands17/personal-assistant.git
 cd max
 npm install
 
