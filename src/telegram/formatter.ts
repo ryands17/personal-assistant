@@ -43,7 +43,6 @@ function escapeSegment(text: string): string {
 /**
  * Convert a markdown table into a readable mobile-friendly list.
  * Returns already-escaped MarkdownV2 text ready to be stashed.
- * *Casa del Poeta* — $383 · ⭐ 4.89
  */
 function convertTable(table: string): string {
   const rows = table.trim().split("\n").filter(row => !/^\|[-| :]+\|$/.test(row.trim()));

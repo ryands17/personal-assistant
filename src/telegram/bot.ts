@@ -96,6 +96,19 @@ export function createBot(): Bot {
       return;
     }
 
+    // "default" clears the group model override (group only)
+    if (arg === "default") {
+      if (!isGroup) {
+        await ctx.reply("The default model is set via the global config. Use /model <name> in DM to change it.");
+        return;
+      }
+      const previous = getGroupModel(chatId!) ?? config.copilotModel;
+      setGroupModel(chatId!, null);
+      destroyGroupSession(chatId!);
+      await ctx.reply(`Group model cleared — reverting to global default (${config.copilotModel}).\n\n_Was: ${previous}. Session reset._`);
+      return;
+    }
+
     // Validate model
     try {
       const { getClient } = await import("../copilot/client.js");
