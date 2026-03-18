@@ -14,11 +14,14 @@ export function setCronMessageSender(fn: (chatId: number, text: string) => Promi
 
 const scheduledTasks = new Map<number, ScheduledTask>();
 
+// Use a smaller/cheaper model for the one-shot cron expression conversion
+const CRON_PARSE_MODEL = "claude-haiku-4.5";
+
 /** Convert a natural language schedule description to a 5-field cron expression using the Copilot API. */
 export async function parseSchedule(description: string): Promise<string> {
   const client = await getClient();
   const session = await client.createSession({
-    model: config.copilotModel,
+    model: CRON_PARSE_MODEL,
     streaming: false,
     systemMessage: {
       content:
