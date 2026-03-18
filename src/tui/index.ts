@@ -687,6 +687,28 @@ function apiPost(path: string, body: Record<string, unknown>, cb: (data: any) =>
   req.end();
 }
 
+function apiPatch(path: string, body: Record<string, unknown>, cb: (data: any) => void): void {
+  const json = JSON.stringify(body);
+  const url = new URL(path, API_BASE);
+  const req = http.request(url, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(json), ...authHeaders() },
+  }, (res) => {
+    let data = "";
+    res.on("data", (chunk) => (data += chunk));
+    res.on("end", () => {
+      try { cb(JSON.parse(data)); } catch { console.log(data); }
+      rl.prompt();
+    });
+  });
+  req.on("error", (err) => {
+    console.error(C.red(`  Error: ${err.message}`));
+    rl.prompt();
+  });
+  req.write(json);
+  req.end();
+}
+
 /** DELETE an endpoint and call back with parsed result. */
 function apiDelete(path: string, cb: (data: any) => void): void {
   const url = new URL(path, API_BASE);
@@ -881,6 +903,24 @@ function cmdCron(arg: string): void {
 
   const id = parseInt(rest[0] ?? "", 10);
 
+  if (sub === "edit") {
+    const id = parseInt(rest[0] ?? "", 10);
+    if (isNaN(id)) { console.log(C.dim("  Usage: /cron edit <id> prompt|schedule | <new value>\n")); rl.prompt(); return; }
+    const afterId = rest.slice(1).join(" ");
+    const pipeIdx = afterId.indexOf("|");
+    if (pipeIdx === -1) { console.log(C.dim("  Usage: /cron edit <id> prompt|schedule | <new value>\n")); rl.prompt(); return; }
+    const field = afterId.slice(0, pipeIdx).trim().toLowerCase();
+    const value = afterId.slice(pipeIdx + 1).trim();
+    if (!value) { console.log(C.dim("  The new value cannot be empty.\n")); rl.prompt(); return; }
+    if (field !== "prompt" && field !== "schedule") { console.log(C.dim("  Field must be 'prompt' or 'schedule'.\n")); rl.prompt(); return; }
+    const body: Record<string, unknown> = field === "prompt" ? { prompt: value } : { scheduleDescription: value };
+    apiPatch(`/crons/${id}`, body, (data: any) => {
+      if (data?.error) { console.log(C.red(`  Error: ${data.error}\n`)); return; }
+      console.log(C.dim(`  Cron #${id} ${field} updated.\n`));
+    });
+    return;
+  }
+
   if (sub === "delete") {
     if (isNaN(id)) { console.log(C.dim("  Usage: /cron delete <id>\n")); rl.prompt(); return; }
     apiDelete(`/crons/${id}`, (data: any) => {
@@ -908,7 +948,7 @@ function cmdCron(arg: string): void {
     return;
   }
 
-  console.log(C.dim("  Usage: /cron [list|delete <id>|pause <id>|resume <id>]\n"));
+  console.log(C.dim("  Usage: /cron [list|edit <id> prompt|schedule | <value>|delete <id>|pause <id>|resume <id>]\n"));
   rl.prompt();
 }
 
@@ -918,7 +958,7 @@ function cmdHelp(): void {
   console.log();
   console.log(`    ${C.coral("/model")} ${C.dim("[name]")}        show or switch model`);
   console.log(`    ${C.coral("/auto")}                 toggle auto model routing`);
-  console.log(`    ${C.coral("/cron")} ${C.dim("[list|delete|pause|resume]")}  manage cron jobs`);
+  console.log(`    ${C.coral("/cron")} ${C.dim("[list|edit|delete|pause|resume]")}  manage cron jobs`);
   console.log(`    ${C.coral("/memory")}               show stored memories`);
   console.log(`    ${C.coral("/skills")}               list installed skills`);
   console.log(`    ${C.coral("/workers")}              list active sessions`);

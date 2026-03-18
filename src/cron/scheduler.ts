@@ -144,3 +144,16 @@ export function resume(cronId: number, chatId: number): void {
     console.log(`[cron] Resumed cron #${cronId}`);
   }
 }
+
+/** Update a cron's schedule by stopping the old task and rescheduling with the new expression. */
+export function updateSchedule(cronRow: CronRow): void {
+  const existing = scheduledTasks.get(cronRow.id);
+  if (existing) {
+    existing.stop();
+    scheduledTasks.delete(cronRow.id);
+  }
+  if (!cronRow.paused) {
+    scheduleTask(cronRow);
+    console.log(`[cron] Rescheduled cron #${cronRow.id} with expression: ${cronRow.cron_expression}`);
+  }
+}

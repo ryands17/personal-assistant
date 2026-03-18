@@ -375,6 +375,18 @@ export function setCronPaused(id: number, chatId: number, paused: boolean): bool
   return result.changes > 0;
 }
 
+export function updateCronPrompt(id: number, chatId: number, prompt: string): boolean {
+  const db = getDb();
+  const result = db.prepare(`UPDATE crons SET prompt = ? WHERE id = ? AND chat_id = ?`).run(prompt, id, chatId);
+  return result.changes > 0;
+}
+
+export function updateCronSchedule(id: number, chatId: number, scheduleDescription: string, cronExpression: string): boolean {
+  const db = getDb();
+  const result = db.prepare(`UPDATE crons SET schedule_description = ?, cron_expression = ? WHERE id = ? AND chat_id = ?`).run(scheduleDescription, cronExpression, id, chatId);
+  return result.changes > 0;
+}
+
 export function closeDb(): void {
   if (db) {
     db.close();

@@ -2,7 +2,7 @@ import { Bot, type Context } from "grammy";
 import { config, persistModel } from "../config.js";
 import { sendToOrchestrator, cancelCurrentMessage, getWorkers, getLastRouteResult, destroyGroupSession } from "../copilot/orchestrator.js";
 import { chunkMessage, toTelegramMarkdown } from "./formatter.js";
-import { searchMemories, isGroupAllowed, addGroupAllowlist, removeGroupAllowlist, getGroupAllowlist, setGroupGoal, getGroupGoal, setGroupModel, getGroupModel, createCron, getCrons, deleteCron, setCronPaused } from "../store/db.js";
+import { searchMemories, isGroupAllowed, addGroupAllowlist, removeGroupAllowlist, getGroupAllowlist, setGroupGoal, getGroupGoal, setGroupModel, getGroupModel, createCron, getCrons, getCronById, deleteCron, setCronPaused, updateCronPrompt, updateCronSchedule } from "../store/db.js";
 import { listSkills } from "../copilot/skills.js";
 import { restartDaemon } from "../daemon.js";
 import * as cronScheduler from "../cron/scheduler.js";
@@ -315,6 +315,70 @@ export function createBot(): Bot {
       return;
     }
 
+    // /cron edit <id> prompt | <new prompt>
+    // /cron edit <id> schedule | <new schedule description>
+    if (subcommand === "edit") {
+      const id = parseInt(rest[0] ?? "", 10);
+      if (isNaN(id)) {
+        await ctx.reply("Usage:\n  `/cron edit <id> prompt | <new prompt>`\n  `/cron edit <id> schedule | <new schedule>`", { parse_mode: "Markdown" });
+        return;
+      }
+
+      const afterId = rest.slice(1).join(" ");
+      const editPipeIndex = afterId.indexOf("|");
+      if (editPipeIndex === -1) {
+        await ctx.reply("Usage:\n  `/cron edit <id> prompt | <new prompt>`\n  `/cron edit <id> schedule | <new schedule>`", { parse_mode: "Markdown" });
+        return;
+      }
+
+      const field = afterId.slice(0, editPipeIndex).trim().toLowerCase();
+      const value = afterId.slice(editPipeIndex + 1).trim();
+
+      if (!value) {
+        await ctx.reply("The new value cannot be empty.");
+        return;
+      }
+
+      if (field === "prompt") {
+        const updated = updateCronPrompt(id, chatId, value);
+        if (!updated) {
+          await ctx.reply(`Cron #${id} not found in this chat.`);
+          return;
+        }
+        await ctx.reply(`✅ Cron #${id} prompt updated.\n\n💬 ${value}`);
+        return;
+      }
+
+      if (field === "schedule") {
+        const processingMsg = await ctx.reply("⏳ Parsing new schedule...");
+        let cronExpression: string;
+        try {
+          cronExpression = await cronScheduler.parseSchedule(value);
+        } catch (err) {
+          await ctx.api.editMessageText(chatId, processingMsg.message_id, `❌ Could not parse schedule: ${err instanceof Error ? err.message : String(err)}`);
+          return;
+        }
+        const updated = updateCronSchedule(id, chatId, value, cronExpression);
+        if (!updated) {
+          await ctx.api.editMessageText(chatId, processingMsg.message_id, `Cron #${id} not found in this chat.`);
+          return;
+        }
+        const row = getCronById(id);
+        if (row) cronScheduler.updateSchedule(row);
+        const timezone = config.timezone || "UTC";
+        await ctx.api.editMessageText(
+          chatId,
+          processingMsg.message_id,
+          `✅ Cron #${id} schedule updated.\n\n📅 ${value}\n🕐 \`${cronExpression}\` (${timezone})`,
+          { parse_mode: "Markdown" }
+        );
+        return;
+      }
+
+      await ctx.reply("Field must be `prompt` or `schedule`.", { parse_mode: "Markdown" });
+      return;
+    }
+
     // /cron delete <id>
     if (subcommand === "delete") {
       const id = parseInt(rest[0] ?? "", 10);
@@ -371,6 +435,8 @@ export function createBot(): Bot {
       "Usage:\n" +
       "  `/cron <schedule> | <prompt>` — create a cron\n" +
       "  `/cron list` — list crons\n" +
+      "  `/cron edit <id> prompt | <new prompt>` — edit prompt\n" +
+      "  `/cron edit <id> schedule | <new schedule>` — edit schedule\n" +
       "  `/cron delete <id>` — delete a cron\n" +
       "  `/cron pause <id>` — pause a cron\n" +
       "  `/cron resume <id>` — resume a cron\n\n" +

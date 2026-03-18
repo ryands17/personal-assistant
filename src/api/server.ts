@@ -6,7 +6,7 @@ import { sendToOrchestrator, getWorkers, cancelCurrentMessage, getLastRouteResul
 import { sendPhoto } from "../telegram/bot.js";
 import { config, persistModel } from "../config.js";
 import { getRouterConfig, updateRouterConfig } from "../copilot/router.js";
-import { searchMemories, getAllCrons, getCronById, deleteCron, setCronPaused } from "../store/db.js";
+import { searchMemories, getAllCrons, getCronById, deleteCron, setCronPaused, updateCronPrompt, updateCronSchedule } from "../store/db.js";
 import { listSkills, removeSkill } from "../copilot/skills.js";
 import { restartDaemon } from "../daemon.js";
 import * as cronScheduler from "../cron/scheduler.js";
@@ -290,6 +290,39 @@ app.post("/crons/:id/resume", (req: Request, res: Response) => {
   setCronPaused(id, row.chat_id, false);
   cronScheduler.resume(id, row.chat_id);
   res.json({ status: "resumed", id });
+});
+
+app.patch("/crons/:id", async (req: Request, res: Response) => {
+  const id = parseInt(req.params["id"] as string, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid cron ID" }); return; }
+  const row = getCronById(id);
+  if (!row) { res.status(404).json({ error: "Cron not found" }); return; }
+
+  const { prompt, scheduleDescription } = req.body as { prompt?: string; scheduleDescription?: string };
+
+  if (!prompt && !scheduleDescription) {
+    res.status(400).json({ error: "Provide 'prompt' and/or 'scheduleDescription' to update" });
+    return;
+  }
+
+  if (prompt) {
+    updateCronPrompt(id, row.chat_id, prompt);
+  }
+
+  if (scheduleDescription) {
+    let cronExpression: string;
+    try {
+      cronExpression = await cronScheduler.parseSchedule(scheduleDescription);
+    } catch (err) {
+      res.status(422).json({ error: `Could not parse schedule: ${err instanceof Error ? err.message : String(err)}` });
+      return;
+    }
+    updateCronSchedule(id, row.chat_id, scheduleDescription, cronExpression);
+    const updated = getCronById(id);
+    if (updated) cronScheduler.updateSchedule(updated);
+  }
+
+  res.json({ status: "updated", id });
 });
 
 export function startApiServer(): Promise<void> {
