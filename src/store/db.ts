@@ -64,6 +64,17 @@ export function getDb(): Database.Database {
         PRIMARY KEY (chat_id, user_id)
       )
     `);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS crons (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chat_id INTEGER NOT NULL,
+        schedule_description TEXT NOT NULL,
+        cron_expression TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        paused INTEGER NOT NULL DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
 
     // Migrate conversation_log: add chat_id column if missing
     try {
@@ -303,6 +314,53 @@ export function getGroupAllowlist(chatId: number): { userId: number; username: s
   const db = getDb();
   const rows = db.prepare(`SELECT user_id, username FROM group_allowlist WHERE chat_id = ?`).all(chatId) as { user_id: number; username: string | null }[];
   return rows.map((r) => ({ userId: r.user_id, username: r.username }));
+}
+
+// ── Cron management ───────────────────────────────────────────────────────────
+
+export interface CronRow {
+  id: number;
+  chat_id: number;
+  schedule_description: string;
+  cron_expression: string;
+  prompt: string;
+  paused: number;
+  created_at: string;
+}
+
+/** Create a new cron job and return its ID. */
+export function createCron(chatId: number, scheduleDescription: string, cronExpression: string, prompt: string): number {
+  const db = getDb();
+  const result = db.prepare(
+    `INSERT INTO crons (chat_id, schedule_description, cron_expression, prompt) VALUES (?, ?, ?, ?)`
+  ).run(chatId, scheduleDescription, cronExpression, prompt);
+  return result.lastInsertRowid as number;
+}
+
+/** Get all crons for a specific chat. */
+export function getCrons(chatId: number): CronRow[] {
+  const db = getDb();
+  return db.prepare(`SELECT * FROM crons WHERE chat_id = ? ORDER BY id`).all(chatId) as CronRow[];
+}
+
+/** Get all non-paused crons (for startup loading). */
+export function getAllActiveCrons(): CronRow[] {
+  const db = getDb();
+  return db.prepare(`SELECT * FROM crons WHERE paused = 0`).all() as CronRow[];
+}
+
+/** Delete a cron by ID, scoped to chatId for safety. Returns true if deleted. */
+export function deleteCron(id: number, chatId: number): boolean {
+  const db = getDb();
+  const result = db.prepare(`DELETE FROM crons WHERE id = ? AND chat_id = ?`).run(id, chatId);
+  return result.changes > 0;
+}
+
+/** Set paused state for a cron, scoped to chatId for safety. Returns true if updated. */
+export function setCronPaused(id: number, chatId: number, paused: boolean): boolean {
+  const db = getDb();
+  const result = db.prepare(`UPDATE crons SET paused = ? WHERE id = ? AND chat_id = ?`).run(paused ? 1 : 0, id, chatId);
+  return result.changes > 0;
 }
 
 export function closeDb(): void {

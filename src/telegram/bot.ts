@@ -2,9 +2,10 @@ import { Bot, type Context } from "grammy";
 import { config, persistModel } from "../config.js";
 import { sendToOrchestrator, cancelCurrentMessage, getWorkers, getLastRouteResult, destroyGroupSession } from "../copilot/orchestrator.js";
 import { chunkMessage, toTelegramMarkdown } from "./formatter.js";
-import { searchMemories, isGroupAllowed, addGroupAllowlist, removeGroupAllowlist, getGroupAllowlist, setGroupGoal, getGroupGoal, setGroupModel, getGroupModel } from "../store/db.js";
+import { searchMemories, isGroupAllowed, addGroupAllowlist, removeGroupAllowlist, getGroupAllowlist, setGroupGoal, getGroupGoal, setGroupModel, getGroupModel, createCron, getCrons, deleteCron, setCronPaused } from "../store/db.js";
 import { listSkills } from "../copilot/skills.js";
 import { restartDaemon } from "../daemon.js";
+import * as cronScheduler from "../cron/scheduler.js";
 
 let bot: Bot | undefined;
 
@@ -253,6 +254,131 @@ export function createBot(): Bot {
     }
   });
 
+  // ── Cron management (owner-only) ────────────────────────────────────────────
+  bot.command("cron", async (ctx) => {
+    if (ctx.from?.id !== config.authorizedUserId) return;
+
+    const chatId = ctx.chat!.id;
+    const raw = ctx.match?.trim() ?? "";
+
+    // If the input contains a pipe, it's always a create command — check first
+    // to avoid subcommand keywords in the schedule (e.g. "list tasks every day | …")
+    const pipeIndex = raw.indexOf("|");
+    if (pipeIndex !== -1) {
+      const scheduleDescription = raw.slice(0, pipeIndex).trim();
+      const prompt = raw.slice(pipeIndex + 1).trim();
+
+      if (!scheduleDescription || !prompt) {
+        await ctx.reply("Both a schedule and a prompt are required.\n\nExample: `/cron every morning at 9am | Give me a brief summary of the day`", { parse_mode: "Markdown" });
+        return;
+      }
+
+      const processingMsg = await ctx.reply("⏳ Parsing schedule...");
+
+      let cronExpression: string;
+      try {
+        cronExpression = await cronScheduler.parseSchedule(scheduleDescription);
+      } catch (err) {
+        await ctx.api.editMessageText(chatId, processingMsg.message_id, `❌ Could not parse schedule: ${err instanceof Error ? err.message : String(err)}`);
+        return;
+      }
+
+      const id = createCron(chatId, scheduleDescription, cronExpression, prompt);
+      const rows = getCrons(chatId);
+      const newRow = rows.find((r) => r.id === id)!;
+      cronScheduler.add(newRow);
+
+      const timezone = config.timezone || "UTC";
+      await ctx.api.editMessageText(
+        chatId,
+        processingMsg.message_id,
+        `✅ Cron #${id} created\n\n📅 Schedule: ${scheduleDescription}\n🕐 Expression: \`${cronExpression}\` (${timezone})\n💬 Prompt: ${prompt}`,
+        { parse_mode: "Markdown" }
+      );
+      return;
+    }
+
+    const [subcommand, ...rest] = raw.split(/\s+/);
+
+    // /cron list
+    if (subcommand === "list") {
+      const rows = getCrons(chatId);
+      if (rows.length === 0) {
+        await ctx.reply("No crons set up for this chat.");
+        return;
+      }
+      const lines = rows.map((r) => {
+        const status = r.paused ? "⏸ paused" : "▶ active";
+        return `#${r.id} [${status}] \`${r.cron_expression}\`\n  📋 ${r.schedule_description}\n  💬 ${r.prompt.slice(0, 80)}${r.prompt.length > 80 ? "…" : ""}`;
+      });
+      await ctx.reply(`Crons for this chat:\n\n${lines.join("\n\n")}`);
+      return;
+    }
+
+    // /cron delete <id>
+    if (subcommand === "delete") {
+      const id = parseInt(rest[0] ?? "", 10);
+      if (isNaN(id)) {
+        await ctx.reply("Usage: /cron delete <id>");
+        return;
+      }
+      const deleted = deleteCron(id, chatId);
+      if (deleted) {
+        cronScheduler.remove(id);
+        await ctx.reply(`Cron #${id} deleted.`);
+      } else {
+        await ctx.reply(`Cron #${id} not found in this chat.`);
+      }
+      return;
+    }
+
+    // /cron pause <id>
+    if (subcommand === "pause") {
+      const id = parseInt(rest[0] ?? "", 10);
+      if (isNaN(id)) {
+        await ctx.reply("Usage: /cron pause <id>");
+        return;
+      }
+      const updated = setCronPaused(id, chatId, true);
+      if (updated) {
+        cronScheduler.pause(id);
+        await ctx.reply(`Cron #${id} paused.`);
+      } else {
+        await ctx.reply(`Cron #${id} not found in this chat.`);
+      }
+      return;
+    }
+
+    // /cron resume <id>
+    if (subcommand === "resume") {
+      const id = parseInt(rest[0] ?? "", 10);
+      if (isNaN(id)) {
+        await ctx.reply("Usage: /cron resume <id>");
+        return;
+      }
+      const updated = setCronPaused(id, chatId, false);
+      if (updated) {
+        cronScheduler.resume(id, chatId);
+        await ctx.reply(`Cron #${id} resumed.`);
+      } else {
+        await ctx.reply(`Cron #${id} not found in this chat.`);
+      }
+      return;
+    }
+
+    // No pipe and no recognized subcommand — show usage
+    await ctx.reply(
+      "Usage:\n" +
+      "  `/cron <schedule> | <prompt>` — create a cron\n" +
+      "  `/cron list` — list crons\n" +
+      "  `/cron delete <id>` — delete a cron\n" +
+      "  `/cron pause <id>` — pause a cron\n" +
+      "  `/cron resume <id>` — resume a cron\n\n" +
+      "Example: `/cron every morning at 9am | Give me a brief summary of the day`",
+      { parse_mode: "Markdown" }
+    );
+  });
+
   // Handle all text messages
   bot.on("message:text", async (ctx) => {
     const chatId = ctx.chat.id;
@@ -331,6 +457,23 @@ export function createBot(): Bot {
         }
       }
     );
+  });
+
+  // Wire up the cron scheduler to send messages via this bot instance
+  cronScheduler.setCronMessageSender(async (chatId: number, text: string) => {
+    if (!bot) return;
+    const formatted = toTelegramMarkdown(text);
+    const chunks = chunkMessage(formatted);
+    const fallbackChunks = chunkMessage(text);
+    for (let i = 0; i < chunks.length; i++) {
+      try {
+        await bot.api.sendMessage(chatId, chunks[i], { parse_mode: "MarkdownV2" });
+      } catch {
+        try {
+          await bot.api.sendMessage(chatId, fallbackChunks[i] ?? chunks[i]);
+        } catch { /* best effort */ }
+      }
+    }
   });
 
   return bot;

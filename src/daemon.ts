@@ -6,6 +6,7 @@ import { getDb, closeDb } from "./store/db.js";
 import { config } from "./config.js";
 import { spawn } from "child_process";
 import { checkForUpdate } from "./update.js";
+import * as cronScheduler from "./cron/scheduler.js";
 
 function truncate(text: string, max = 200): string {
   const oneLine = text.replace(/\n/g, " ").trim();
@@ -57,6 +58,7 @@ async function main(): Promise<void> {
   if (config.telegramEnabled) {
     createBot();
     await startBot();
+    cronScheduler.init();
   } else if (!config.telegramBotToken && config.authorizedUserId === undefined) {
     console.log("[max] Telegram not configured — skipping bot. Run 'max setup' to configure.");
   } else if (!config.telegramBotToken) {
