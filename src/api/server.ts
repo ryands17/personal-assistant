@@ -6,9 +6,10 @@ import { sendToOrchestrator, getWorkers, cancelCurrentMessage, getLastRouteResul
 import { sendPhoto } from "../telegram/bot.js";
 import { config, persistModel } from "../config.js";
 import { getRouterConfig, updateRouterConfig } from "../copilot/router.js";
-import { searchMemories } from "../store/db.js";
+import { searchMemories, getAllCrons, getCronById, deleteCron, setCronPaused } from "../store/db.js";
 import { listSkills, removeSkill } from "../copilot/skills.js";
 import { restartDaemon } from "../daemon.js";
+import * as cronScheduler from "../cron/scheduler.js";
 import { API_TOKEN_PATH, ensureMaxHome } from "../paths.js";
 
 // Ensure token file exists (generate on first run)
@@ -253,6 +254,42 @@ app.post("/send-photo", async (req: Request, res: Response) => {
     const msg = err instanceof Error ? err.message : String(err);
     res.status(500).json({ error: msg });
   }
+});
+
+// ── Cron management endpoints ─────────────────────────────────────────────────
+
+app.get("/crons", (_req: Request, res: Response) => {
+  res.json(getAllCrons());
+});
+
+app.delete("/crons/:id", (req: Request, res: Response) => {
+  const id = parseInt(req.params["id"] as string, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid cron ID" }); return; }
+  const row = getCronById(id);
+  if (!row) { res.status(404).json({ error: "Cron not found" }); return; }
+  deleteCron(id, row.chat_id);
+  cronScheduler.remove(id);
+  res.json({ status: "deleted", id });
+});
+
+app.post("/crons/:id/pause", (req: Request, res: Response) => {
+  const id = parseInt(req.params["id"] as string, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid cron ID" }); return; }
+  const row = getCronById(id);
+  if (!row) { res.status(404).json({ error: "Cron not found" }); return; }
+  setCronPaused(id, row.chat_id, true);
+  cronScheduler.pause(id);
+  res.json({ status: "paused", id });
+});
+
+app.post("/crons/:id/resume", (req: Request, res: Response) => {
+  const id = parseInt(req.params["id"] as string, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid cron ID" }); return; }
+  const row = getCronById(id);
+  if (!row) { res.status(404).json({ error: "Cron not found" }); return; }
+  setCronPaused(id, row.chat_id, false);
+  cronScheduler.resume(id, row.chat_id);
+  res.json({ status: "resumed", id });
 });
 
 export function startApiServer(): Promise<void> {

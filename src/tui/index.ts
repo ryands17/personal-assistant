@@ -1,8 +1,8 @@
-import * as readline from "readline";
+import { execFile } from "child_process";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "fs";
 import * as http from "http";
-import { exec, execFile } from "child_process";
-import { readFileSync, writeFileSync, appendFileSync, existsSync } from "fs";
-import { HISTORY_PATH, API_TOKEN_PATH, TUI_DEBUG_LOG_PATH, ensureMaxHome } from "../paths.js";
+import * as readline from "readline";
+import { API_TOKEN_PATH, HISTORY_PATH, TUI_DEBUG_LOG_PATH, ensureMaxHome } from "../paths.js";
 
 const API_BASE = process.env.MAX_API_URL || "http://127.0.0.1:7777";
 
@@ -852,12 +852,73 @@ function cmdAuto(): void {
   });
 }
 
+function cmdCron(arg: string): void {
+  const [sub, ...rest] = arg.trim().split(/\s+/);
+
+  if (!sub || sub === "list") {
+    apiGet("/crons", (crons: any) => {
+      if (!Array.isArray(crons)) {
+        console.log(C.red(`  Error: ${crons?.error ?? "Unexpected response from server"}\n`));
+        return;
+      }
+      if (crons.length === 0) {
+        console.log(C.dim("  No crons configured.\n"));
+        return;
+      }
+      console.log();
+      console.log(C.boldWhite("  CRONS"));
+      console.log();
+      for (const c of crons) {
+        const status = c.paused ? C.yellow("⏸ paused") : C.green("▶ active");
+        console.log(`  ${C.coral(`#${c.id}`)}  ${status}   ${C.dim(c.cron_expression)}   chat:${c.chat_id}`);
+        console.log(`      ${C.dim(c.schedule_description)}`);
+        console.log(`      ${c.prompt.slice(0, 80)}${c.prompt.length > 80 ? "…" : ""}`);
+        console.log();
+      }
+    });
+    return;
+  }
+
+  const id = parseInt(rest[0] ?? "", 10);
+
+  if (sub === "delete") {
+    if (isNaN(id)) { console.log(C.dim("  Usage: /cron delete <id>\n")); rl.prompt(); return; }
+    apiDelete(`/crons/${id}`, (data: any) => {
+      if (data?.error) { console.log(C.red(`  Error: ${data.error}\n`)); return; }
+      console.log(C.dim(`  Cron #${id} deleted.\n`));
+    });
+    return;
+  }
+
+  if (sub === "pause") {
+    if (isNaN(id)) { console.log(C.dim("  Usage: /cron pause <id>\n")); rl.prompt(); return; }
+    apiPost(`/crons/${id}/pause`, {}, (data: any) => {
+      if (data?.error) { console.log(C.red(`  Error: ${data.error}\n`)); return; }
+      console.log(C.dim(`  Cron #${id} paused.\n`));
+    });
+    return;
+  }
+
+  if (sub === "resume") {
+    if (isNaN(id)) { console.log(C.dim("  Usage: /cron resume <id>\n")); rl.prompt(); return; }
+    apiPost(`/crons/${id}/resume`, {}, (data: any) => {
+      if (data?.error) { console.log(C.red(`  Error: ${data.error}\n`)); return; }
+      console.log(C.dim(`  Cron #${id} resumed.\n`));
+    });
+    return;
+  }
+
+  console.log(C.dim("  Usage: /cron [list|delete <id>|pause <id>|resume <id>]\n"));
+  rl.prompt();
+}
+
 function cmdHelp(): void {
   console.log();
   console.log(C.boldWhite("    COMMANDS"));
   console.log();
   console.log(`    ${C.coral("/model")} ${C.dim("[name]")}        show or switch model`);
   console.log(`    ${C.coral("/auto")}                 toggle auto model routing`);
+  console.log(`    ${C.coral("/cron")} ${C.dim("[list|delete|pause|resume]")}  manage cron jobs`);
   console.log(`    ${C.coral("/memory")}               show stored memories`);
   console.log(`    ${C.coral("/skills")}               list installed skills`);
   console.log(`    ${C.coral("/workers")}              list active sessions`);
@@ -949,6 +1010,7 @@ setTimeout(() => {
     if (trimmed === "/cancel") { sendCancel(); return; }
     if (trimmed === "/sessions" || trimmed === "/workers") { cmdWorkers(); return; }
     if (trimmed.startsWith("/model")) { cmdModel(trimmed.slice(6).trim()); return; }
+    if (trimmed.startsWith("/cron")) { cmdCron(trimmed.slice(5).trim()); return; }
     if (trimmed === "/auto") { cmdAuto(); return; }
     if (trimmed === "/memory") { cmdMemory(); return; }
     if (trimmed === "/skills") { cmdSkills(); return; }

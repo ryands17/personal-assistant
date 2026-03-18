@@ -349,6 +349,18 @@ export function getAllActiveCrons(): CronRow[] {
   return db.prepare(`SELECT * FROM crons WHERE paused = 0`).all() as CronRow[];
 }
 
+/** Get all crons across all chats (for management views). */
+export function getAllCrons(): CronRow[] {
+  const db = getDb();
+  return db.prepare(`SELECT * FROM crons ORDER BY chat_id, id`).all() as CronRow[];
+}
+
+/** Get a single cron by ID. */
+export function getCronById(id: number): CronRow | undefined {
+  const db = getDb();
+  return db.prepare(`SELECT * FROM crons WHERE id = ?`).get(id) as CronRow | undefined;
+}
+
 /** Delete a cron by ID, scoped to chatId for safety. Returns true if deleted. */
 export function deleteCron(id: number, chatId: number): boolean {
   const db = getDb();
