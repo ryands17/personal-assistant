@@ -75,6 +75,11 @@ export function getDb(): Database.Database {
       db.exec(`ALTER TABLE memories ADD COLUMN chat_id INTEGER`);
     } catch { /* already exists */ }
 
+    // Migrate group_config: add model column if missing
+    try {
+      db.exec(`ALTER TABLE group_config ADD COLUMN model TEXT`);
+    } catch { /* already exists */ }
+
     // Migrate: if conversation_log had a stricter CHECK on role, recreate it
     try {
       db.prepare(`INSERT INTO conversation_log (role, content, source) VALUES ('system', '__migration_test__', 'test')`).run();
@@ -239,10 +244,14 @@ export function getMemorySummary(chatId?: number): string {
 
 // ── Group management ──────────────────────────────────────────────────────────
 
-/** Set the goal for a group chat (first message). */
+/** Set the goal for a group chat (first message). Preserves existing model setting. */
 export function setGroupGoal(chatId: number, goal: string): void {
   const db = getDb();
-  db.prepare(`INSERT OR REPLACE INTO group_config (chat_id, goal) VALUES (?, ?)`).run(chatId, goal);
+  // Use INSERT with ON CONFLICT UPDATE to preserve the model column
+  db.prepare(`
+    INSERT INTO group_config (chat_id, goal) VALUES (?, ?)
+    ON CONFLICT(chat_id) DO UPDATE SET goal = excluded.goal
+  `).run(chatId, goal);
 }
 
 /** Get the goal for a group chat. */
@@ -250,6 +259,22 @@ export function getGroupGoal(chatId: number): string | undefined {
   const db = getDb();
   const row = db.prepare(`SELECT goal FROM group_config WHERE chat_id = ?`).get(chatId) as { goal: string } | undefined;
   return row?.goal;
+}
+
+/** Set the model override for a group chat. Pass null to clear (revert to global). */
+export function setGroupModel(chatId: number, model: string | null): void {
+  const db = getDb();
+  db.prepare(`
+    INSERT INTO group_config (chat_id, goal, model) VALUES (?, '', ?)
+    ON CONFLICT(chat_id) DO UPDATE SET model = excluded.model
+  `).run(chatId, model);
+}
+
+/** Get the model override for a group chat, or undefined to use global default. */
+export function getGroupModel(chatId: number): string | undefined {
+  const db = getDb();
+  const row = db.prepare(`SELECT model FROM group_config WHERE chat_id = ?`).get(chatId) as { model: string | null } | undefined;
+  return row?.model ?? undefined;
 }
 
 /** Check if a user is allowed to interact with the bot in a group. */

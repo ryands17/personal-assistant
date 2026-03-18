@@ -7,7 +7,7 @@ import { getSkillDirectories } from "./skills.js";
 import { resetClient } from "./client.js";
 import {
   logConversation, getState, setState, deleteState,
-  getMemorySummary, getRecentConversation, getGroupGoal,
+  getMemorySummary, getRecentConversation, getGroupGoal, getGroupModel,
 } from "../store/db.js";
 import { SESSIONS_DIR, SOUL_PATH } from "../paths.js";
 import { resolveModel, type Tier, type RouteResult } from "./router.js";
@@ -89,6 +89,8 @@ export function getLastRouteResult(): RouteResult | undefined {
 // Keyed by session key: "dm" for direct messages, String(chatId) for groups
 const orchestratorSessions = new Map<string, CopilotSession>();
 const sessionCreatePromises = new Map<string, Promise<CopilotSession>>();
+/** Incremented on destroyGroupSession to invalidate in-flight session creations. */
+const sessionGenerations = new Map<string, number>();
 
 // Per-session message queues
 type QueuedMessage = {
@@ -195,11 +197,15 @@ async function ensureOrchestratorSession(sessionKey: string, chatId?: number): P
   const inFlight = sessionCreatePromises.get(sessionKey);
   if (inFlight) return inFlight;
 
+  const gen = sessionGenerations.get(sessionKey) ?? 0;
   const promise = createOrResumeSession(sessionKey, chatId);
   sessionCreatePromises.set(sessionKey, promise);
   try {
     const session = await promise;
-    orchestratorSessions.set(sessionKey, session);
+    // Only cache if the session hasn't been invalidated (e.g. by a /model change) during creation
+    if ((sessionGenerations.get(sessionKey) ?? 0) === gen) {
+      orchestratorSessions.set(sessionKey, session);
+    }
     return session;
   } finally {
     sessionCreatePromises.delete(sessionKey);
@@ -213,6 +219,7 @@ async function createOrResumeSession(sessionKey: string, chatId?: number): Promi
   const memorySummary = getMemorySummary(chatId);
   const soulContent = readSoul();
   const groupGoal = chatId !== undefined ? getGroupGoal(chatId) : undefined;
+  const effectiveModel = (chatId !== undefined ? getGroupModel(chatId) : undefined) ?? config.copilotModel;
 
   const infiniteSessions = {
     enabled: true,
@@ -232,7 +239,7 @@ async function createOrResumeSession(sessionKey: string, chatId?: number): Promi
     try {
       console.log(`[max] Resuming session '${sessionKey}' (${savedSessionId.slice(0, 8)}…)`);
       const session = await client.resumeSession(savedSessionId, {
-        model: config.copilotModel,
+        model: effectiveModel,
         configDir: SESSIONS_DIR,
         streaming: true,
         systemMessage: { content: systemContent },
@@ -243,7 +250,7 @@ async function createOrResumeSession(sessionKey: string, chatId?: number): Promi
         infiniteSessions,
       });
       console.log(`[max] Resumed session '${sessionKey}' successfully`);
-      if (sessionKey === DM_SESSION_KEY) currentSessionModel = config.copilotModel;
+      if (sessionKey === DM_SESSION_KEY) currentSessionModel = effectiveModel;
       return session;
     } catch (err) {
       console.log(`[max] Could not resume session '${sessionKey}': ${err instanceof Error ? err.message : err}. Creating new.`);
@@ -251,9 +258,9 @@ async function createOrResumeSession(sessionKey: string, chatId?: number): Promi
     }
   }
 
-  console.log(`[max] Creating new session '${sessionKey}'`);
+  console.log(`[max] Creating new session '${sessionKey}' with model '${effectiveModel}'`);
   const session = await client.createSession({
-    model: config.copilotModel,
+    model: effectiveModel,
     configDir: SESSIONS_DIR,
     streaming: true,
     systemMessage: { content: systemContent },
@@ -279,15 +286,24 @@ async function createOrResumeSession(sessionKey: string, chatId?: number): Promi
     }
   }
 
-  if (sessionKey === DM_SESSION_KEY) currentSessionModel = config.copilotModel;
+  if (sessionKey === DM_SESSION_KEY) currentSessionModel = effectiveModel;
   return session;
 }
 
-/** Destroy a group session (e.g. bot removed from group). */
+/** Destroy a group session (e.g. bot removed from group, or model changed). */
 export function destroyGroupSession(chatId: number): void {
   const sessionKey = String(chatId);
   orchestratorSessions.delete(sessionKey);
   sessionCreatePromises.delete(sessionKey);
+  // Bump generation so any in-flight session creation doesn't get cached
+  sessionGenerations.set(sessionKey, (sessionGenerations.get(sessionKey) ?? 0) + 1);
+  // Drain queued items that haven't started processing yet
+  const queue = messageQueues.get(sessionKey);
+  if (queue) {
+    while (queue.length > 0) {
+      queue.shift()!.reject(new Error("Session reset — model changed"));
+    }
+  }
   messageQueues.delete(sessionKey);
   processingFlags.delete(sessionKey);
   deleteState(sessionStateKey(sessionKey));

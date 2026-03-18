@@ -2,7 +2,7 @@ import { Bot, type Context } from "grammy";
 import { config, persistModel } from "../config.js";
 import { sendToOrchestrator, cancelCurrentMessage, getWorkers, getLastRouteResult, destroyGroupSession } from "../copilot/orchestrator.js";
 import { chunkMessage, toTelegramMarkdown } from "./formatter.js";
-import { searchMemories, isGroupAllowed, addGroupAllowlist, removeGroupAllowlist, getGroupAllowlist, setGroupGoal, getGroupGoal } from "../store/db.js";
+import { searchMemories, isGroupAllowed, addGroupAllowlist, removeGroupAllowlist, getGroupAllowlist, setGroupGoal, getGroupGoal, setGroupModel, getGroupModel } from "../store/db.js";
 import { listSkills } from "../copilot/skills.js";
 import { restartDaemon } from "../daemon.js";
 
@@ -56,7 +56,7 @@ export function createBot(): Bot {
   bot.command("start", (ctx) => ctx.reply("Max is online. Send me anything."));
   bot.command("help", async (ctx) => {
     const isGroup = isGroupChat(ctx);
-    const groupCommands = isGroup ? "\n/allow <userId> — Add user to this group's allowlist\n/deny <userId> — Remove user from allowlist\n/allowlist — List allowed users\n/goal — Show this group's goal" : "";
+    const groupCommands = isGroup ? "\n/allow <userId> — Add user to this group's allowlist\n/deny <userId> — Remove user from allowlist\n/allowlist — List allowed users\n/goal — Show this group's goal\n/model [name] — Show or set this group's model" : "";
     await ctx.reply(
       "I'm Max, your AI daemon.\n\n" +
         "Just send me a message and I'll handle it.\n\n" +
@@ -80,29 +80,52 @@ export function createBot(): Bot {
   bot.command("model", async (ctx) => {
     if (ctx.from?.id !== config.authorizedUserId) return;
     const arg = ctx.match?.trim();
-    if (arg) {
-      try {
-        const { getClient } = await import("../copilot/client.js");
-        const client = await getClient();
-        const models = await client.listModels();
-        const match = models.find((m) => m.id === arg);
-        if (!match) {
-          const suggestions = models
-            .filter((m) => m.id.includes(arg) || m.id.toLowerCase().includes(arg.toLowerCase()))
-            .map((m) => m.id);
-          const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}?` : "";
-          await ctx.reply(`Model '${arg}' not found.${hint}`);
-          return;
-        }
-      } catch {
-        // allow anyway
+    const isGroup = isGroupChat(ctx);
+    const chatId = isGroup ? ctx.chat!.id : undefined;
+
+    if (!arg) {
+      // Show current model for this context
+      if (isGroup) {
+        const groupModel = getGroupModel(chatId!);
+        await ctx.reply(groupModel
+          ? `Group model: ${groupModel}`
+          : `No group model set — using global default: ${config.copilotModel}`);
+      } else {
+        await ctx.reply(`Current model: ${config.copilotModel}`);
       }
+      return;
+    }
+
+    // Validate model
+    try {
+      const { getClient } = await import("../copilot/client.js");
+      const client = await getClient();
+      const models = await client.listModels();
+      const match = models.find((m) => m.id === arg);
+      if (!match) {
+        const suggestions = models
+          .filter((m) => m.id.includes(arg) || m.id.toLowerCase().includes(arg.toLowerCase()))
+          .map((m) => m.id);
+        const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}?` : "";
+        await ctx.reply(`Model '${arg}' not found.${hint}`);
+        return;
+      }
+    } catch {
+      // allow anyway if validation fails
+    }
+
+    if (isGroup) {
+      // Set per-group model and destroy session so next message recreates with new model
+      const previous = getGroupModel(chatId!) ?? config.copilotModel;
+      setGroupModel(chatId!, arg);
+      destroyGroupSession(chatId!);
+      await ctx.reply(`Group model: ${previous} → ${arg}\n\n_Session reset — next message will use the new model._`);
+    } else {
+      // DM: set global model
       const previous = config.copilotModel;
       config.copilotModel = arg;
       persistModel(arg);
       await ctx.reply(`Model: ${previous} → ${arg}`);
-    } else {
-      await ctx.reply(`Current model: ${config.copilotModel}`);
     }
   });
   bot.command("memory", async (ctx) => {

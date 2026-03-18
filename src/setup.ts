@@ -193,16 +193,6 @@ ${BOLD}╔═══════════════════════�
 
     console.log(`\n${GREEN}  ✓ Telegram locked down — only user ${userId} can control Max.${RESET}`);
 
-    // ── Step 3: Disable group joins ──
-    console.log(`\n${BOLD}Step 3: Disable group joins (recommended)${RESET}\n`);
-    console.log(`  For extra security, prevent your bot from being added to groups:`);
-    console.log(`  1. Go back to ${BOLD}@BotFather${RESET}`);
-    console.log(`  2. Send ${CYAN}/mybots${RESET} → select your bot → ${CYAN}Bot Settings${RESET} → ${CYAN}Allow Groups?${RESET}`);
-    console.log(`  3. Set to ${BOLD}Disable${RESET}`);
-    console.log();
-
-    await ask(rl, `  ${DIM}Press Enter when done (or skip)...${RESET}`);
-
   } else {
     console.log(`\n${DIM}  Skipping Telegram. You can always set it up later with: max setup${RESET}\n`);
   }
