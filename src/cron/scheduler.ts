@@ -1,7 +1,7 @@
 import cron, { type ScheduledTask } from "node-cron";
 import { approveAll } from "@github/copilot-sdk";
 import { getClient } from "../copilot/client.js";
-import { getAllActiveCrons, getCrons, type CronRow } from "../store/db.js";
+import { getAllActiveCrons, getCrons, getCronById, updateCronLastRun, type CronRow } from "../store/db.js";
 import { sendToOrchestrator } from "../copilot/orchestrator.js";
 import { config } from "../config.js";
 
@@ -75,6 +75,8 @@ async function fireCron(cronRow: CronRow): Promise<void> {
     await sendMessage(cronRow.chat_id, fullResponse).catch((err) => {
       console.error(`[cron] Failed to send cron #${cronRow.id} response:`, err instanceof Error ? err.message : err);
     });
+    // Stamp last_run only after the message is successfully sent
+    updateCronLastRun(cronRow.id);
   }
 }
 
@@ -156,4 +158,23 @@ export function updateSchedule(cronRow: CronRow): void {
     scheduleTask(cronRow);
     console.log(`[cron] Rescheduled cron #${cronRow.id} with expression: ${cronRow.cron_expression}`);
   }
+}
+
+/** Return the next scheduled run time for a cron, or null if paused/not scheduled. */
+export function getNextRun(id: number): Date | null {
+  const task = scheduledTasks.get(id);
+  if (!task) return null;
+  try {
+    return task.getNextRun() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Return the last run time for a cron from the DB, or null if it has never fired. */
+export function getPreviousRun(id: number): Date | null {
+  const row = getCronById(id);
+  if (!row?.last_run) return null;
+  const d = new Date(row.last_run);
+  return isNaN(d.getTime()) ? null : d;
 }

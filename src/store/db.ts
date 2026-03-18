@@ -52,6 +52,7 @@ export function getDb(): Database.Database {
       CREATE TABLE IF NOT EXISTS group_config (
         chat_id INTEGER PRIMARY KEY,
         goal TEXT NOT NULL,
+        model TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `);
@@ -72,44 +73,11 @@ export function getDb(): Database.Database {
         cron_expression TEXT NOT NULL,
         prompt TEXT NOT NULL,
         paused INTEGER NOT NULL DEFAULT 0,
+        last_run DATETIME,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `);
 
-    // Migrate conversation_log: add chat_id column if missing
-    try {
-      db.exec(`ALTER TABLE conversation_log ADD COLUMN chat_id INTEGER`);
-    } catch { /* already exists */ }
-
-    // Migrate memories: add chat_id column if missing
-    try {
-      db.exec(`ALTER TABLE memories ADD COLUMN chat_id INTEGER`);
-    } catch { /* already exists */ }
-
-    // Migrate group_config: add model column if missing
-    try {
-      db.exec(`ALTER TABLE group_config ADD COLUMN model TEXT`);
-    } catch { /* already exists */ }
-
-    // Migrate: if conversation_log had a stricter CHECK on role, recreate it
-    try {
-      db.prepare(`INSERT INTO conversation_log (role, content, source) VALUES ('system', '__migration_test__', 'test')`).run();
-      db.prepare(`DELETE FROM conversation_log WHERE content = '__migration_test__'`).run();
-    } catch {
-      db.exec(`ALTER TABLE conversation_log RENAME TO conversation_log_old`);
-      db.exec(`
-        CREATE TABLE conversation_log (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
-          content TEXT NOT NULL,
-          source TEXT NOT NULL DEFAULT 'unknown',
-          chat_id INTEGER,
-          ts DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-      db.exec(`INSERT INTO conversation_log (role, content, source, ts) SELECT role, content, source, ts FROM conversation_log_old`);
-      db.exec(`DROP TABLE conversation_log_old`);
-    }
     // Per-namespace pruning: keep the 200 most recent rows per chat_id
     db.exec(`
       DELETE FROM conversation_log WHERE id NOT IN (
@@ -325,6 +293,7 @@ export interface CronRow {
   cron_expression: string;
   prompt: string;
   paused: number;
+  last_run: string | null;
   created_at: string;
 }
 
@@ -385,6 +354,12 @@ export function updateCronSchedule(id: number, chatId: number, scheduleDescripti
   const db = getDb();
   const result = db.prepare(`UPDATE crons SET schedule_description = ?, cron_expression = ? WHERE id = ? AND chat_id = ?`).run(scheduleDescription, cronExpression, id, chatId);
   return result.changes > 0;
+}
+
+/** Stamp the last_run time on a cron after it fires. */
+export function updateCronLastRun(id: number): void {
+  const db = getDb();
+  db.prepare(`UPDATE crons SET last_run = CURRENT_TIMESTAMP WHERE id = ?`).run(id);
 }
 
 export function closeDb(): void {

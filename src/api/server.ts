@@ -259,7 +259,12 @@ app.post("/send-photo", async (req: Request, res: Response) => {
 // ── Cron management endpoints ─────────────────────────────────────────────────
 
 app.get("/crons", (_req: Request, res: Response) => {
-  res.json(getAllCrons());
+  const rows = getAllCrons();
+  const enriched = rows.map((c) => ({
+    ...c,
+    next_run: c.paused ? null : (cronScheduler.getNextRun(c.id)?.toISOString() ?? null),
+  }));
+  res.json(enriched);
 });
 
 app.delete("/crons/:id", (req: Request, res: Response) => {

@@ -307,9 +307,17 @@ export function createBot(): Bot {
         await ctx.reply("No crons set up for this chat.");
         return;
       }
+      const tz = config.timezone || "UTC";
+      const fmt = (d: Date) => d.toLocaleString("en-GB", { timeZone: tz, hour12: false, dateStyle: "short", timeStyle: "short" });
       const lines = rows.map((r) => {
         const status = r.paused ? "⏸ paused" : "▶ active";
-        return `#${r.id} [${status}] \`${r.cron_expression}\`\n  📋 ${r.schedule_description}\n  💬 ${r.prompt.slice(0, 80)}${r.prompt.length > 80 ? "…" : ""}`;
+        const nextRun = !r.paused ? cronScheduler.getNextRun(r.id) : null;
+        // Use r.last_run directly from the already-fetched row (avoids N+1 DB reads)
+        const prevRun = r.last_run ? new Date(r.last_run) : null;
+        const nextLine = nextRun ? `  ⏭ Next:  ${fmt(nextRun)}` : "";
+        const prevLine = prevRun && !isNaN(prevRun.getTime()) ? `  ⏮ Last:  ${fmt(prevRun)}` : "";
+        // Plain text — no parse_mode to avoid Markdown injection from user-provided prompts/schedules
+        return `#${r.id} [${status}] ${r.cron_expression}\n  📋 ${r.schedule_description}\n  💬 ${r.prompt.slice(0, 80)}${r.prompt.length > 80 ? "…" : ""}${nextLine ? `\n${nextLine}` : ""}${prevLine ? `\n${prevLine}` : ""}`;
       });
       await ctx.reply(`Crons for this chat:\n\n${lines.join("\n\n")}`);
       return;

@@ -895,6 +895,14 @@ function cmdCron(arg: string): void {
         console.log(`  ${C.coral(`#${c.id}`)}  ${status}   ${C.dim(c.cron_expression)}   chat:${c.chat_id}`);
         console.log(`      ${C.dim(c.schedule_description)}`);
         console.log(`      ${c.prompt.slice(0, 80)}${c.prompt.length > 80 ? "…" : ""}`);
+        if (c.next_run) {
+          const next = new Date(c.next_run as string);
+          console.log(`      ${C.dim("⏭ Next:")}  ${next.toLocaleString()}`);
+        }
+        if (c.last_run) {
+          const prev = new Date(c.last_run as string);
+          console.log(`      ${C.dim("⏮ Last:")}  ${prev.toLocaleString()}`);
+        }
         console.log();
       }
     });
