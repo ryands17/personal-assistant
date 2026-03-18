@@ -1,7 +1,7 @@
 import cron, { type ScheduledTask } from "node-cron";
 import { approveAll } from "@github/copilot-sdk";
 import { getClient } from "../copilot/client.js";
-import { getAllActiveCrons, getCrons, getCronById, updateCronLastRun, type CronRow } from "../store/db.js";
+import { getAllActiveCrons, getCrons, getCronById, updateCronLastRun, updateCronMemory, type CronRow } from "../store/db.js";
 import { sendToOrchestrator } from "../copilot/orchestrator.js";
 import { config } from "../config.js";
 
@@ -14,7 +14,7 @@ export function setCronMessageSender(fn: (chatId: number, text: string) => Promi
 
 const scheduledTasks = new Map<number, ScheduledTask>();
 
-// Use a smaller/cheaper model for the one-shot cron expression conversion
+// Use a smaller/cheaper model for the one-shot cron expression conversion and memory summarisation
 const CRON_PARSE_MODEL = "claude-haiku-4.5";
 
 /** Convert a natural language schedule description to a 5-field cron expression using the Copilot API. */
@@ -46,6 +46,58 @@ export async function parseSchedule(description: string): Promise<string> {
   }
 }
 
+/** The [memory] tag opts a cron into persistent memory. Strip it from the prompt before sending. */
+const MEMORY_TAG = "[memory]";
+
+/**
+ * After a cron fires, asynchronously summarise the run into the cron's memory column.
+ * Non-blocking — fires and forgets so it doesn't delay the Telegram message.
+ */
+function updateMemoryAsync(cronRow: CronRow, strippedPrompt: string, response: string): void {
+  void (async () => {
+    try {
+      const client = await getClient();
+      const session = await client.createSession({
+        model: CRON_PARSE_MODEL,
+        streaming: false,
+        systemMessage: {
+          content:
+            "You are a memory manager for a recurring AI cron job. " +
+            "Given the cron's purpose, its prompt, and the response it produced, " +
+            "write a concise updated memory (max 300 words) capturing: current state, " +
+            "key facts, progress, and anything useful for the next run. " +
+            "Reply with ONLY the updated memory text — no headers, no commentary.",
+        },
+        onPermissionRequest: approveAll,
+      });
+      try {
+        const previousMemory = cronRow.cron_memory ?? "none";
+        const userMessage =
+          `Previous memory: ${previousMemory}\n\n` +
+          `Cron prompt: ${strippedPrompt}\n\n` +
+          `This run's response: ${response}`;
+        const result = await session.sendAndWait({ prompt: userMessage }, 30_000);
+        const newMemory = result?.data?.content?.trim() ?? "";
+        if (newMemory) {
+          // Guard against stale writes: if the user cleared memory after this run started,
+          // respect that action and skip the update.
+          const currentRow = getCronById(cronRow.id);
+          if (cronRow.cron_memory !== null && currentRow?.cron_memory === null) {
+            console.log(`[cron] Memory update skipped for cron #${cronRow.id} (cleared by user during run)`);
+          } else {
+            updateCronMemory(cronRow.id, newMemory);
+            console.log(`[cron] Memory updated for cron #${cronRow.id}`);
+          }
+        }
+      } finally {
+        await session.destroy().catch(() => {});
+      }
+    } catch (err) {
+      console.error(`[cron] Failed to update memory for cron #${cronRow.id}:`, err instanceof Error ? err.message : err);
+    }
+  })();
+}
+
 /** Fire a single cron: run its prompt through the orchestrator and send the reply. */
 async function fireCron(cronRow: CronRow): Promise<void> {
   if (!sendMessage) {
@@ -53,12 +105,22 @@ async function fireCron(cronRow: CronRow): Promise<void> {
     return;
   }
 
-  console.log(`[cron] Firing cron #${cronRow.id} for chat ${cronRow.chat_id}: ${cronRow.prompt.slice(0, 60)}`);
+  const hasMemory = cronRow.prompt.includes(MEMORY_TAG);
+  // Strip the [memory] tag before sending to the AI
+  const strippedPrompt = hasMemory ? cronRow.prompt.replace(MEMORY_TAG, "").trim() : cronRow.prompt;
+
+  // Inject stored memory as silent context prefix so the AI can use it without narrating it
+  const effectivePrompt =
+    hasMemory && cronRow.cron_memory
+      ? `[Memory from previous run]\n${cronRow.cron_memory}\n[End of memory]\n\n${strippedPrompt}`
+      : strippedPrompt;
+
+  console.log(`[cron] Firing cron #${cronRow.id} for chat ${cronRow.chat_id}: ${strippedPrompt.slice(0, 60)}`);
 
   const fullResponse = await new Promise<string>((resolve) => {
     let captured = "";
     sendToOrchestrator(
-      cronRow.prompt,
+      effectivePrompt,
       { type: "telegram", chatId: cronRow.chat_id, messageId: 0 },
       (text, done) => {
         if (done) {
@@ -77,6 +139,10 @@ async function fireCron(cronRow: CronRow): Promise<void> {
     });
     // Stamp last_run only after the message is successfully sent
     updateCronLastRun(cronRow.id);
+    // If memory is enabled, asynchronously update the memory column (non-blocking)
+    if (hasMemory) {
+      updateMemoryAsync(cronRow, strippedPrompt, fullResponse);
+    }
   }
 }
 

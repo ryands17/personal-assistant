@@ -6,7 +6,7 @@ import { sendToOrchestrator, getWorkers, cancelCurrentMessage, getLastRouteResul
 import { sendPhoto } from "../telegram/bot.js";
 import { config, persistModel } from "../config.js";
 import { getRouterConfig, updateRouterConfig } from "../copilot/router.js";
-import { searchMemories, getAllCrons, getCronById, deleteCron, setCronPaused, updateCronPrompt, updateCronSchedule } from "../store/db.js";
+import { searchMemories, getAllCrons, getCronById, deleteCron, setCronPaused, updateCronPrompt, updateCronSchedule, clearCronMemory } from "../store/db.js";
 import { listSkills, removeSkill } from "../copilot/skills.js";
 import { restartDaemon } from "../daemon.js";
 import * as cronScheduler from "../cron/scheduler.js";
@@ -328,6 +328,15 @@ app.patch("/crons/:id", async (req: Request, res: Response) => {
   }
 
   res.json({ status: "updated", id });
+});
+
+app.delete("/crons/:id/memory", (req: Request, res: Response) => {
+  const id = parseInt(req.params["id"] as string, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid cron ID" }); return; }
+  const row = getCronById(id);
+  if (!row) { res.status(404).json({ error: "Cron not found" }); return; }
+  clearCronMemory(id);
+  res.json({ status: "cleared", id });
 });
 
 export function startApiServer(): Promise<void> {

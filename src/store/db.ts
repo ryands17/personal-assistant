@@ -74,6 +74,7 @@ export function getDb(): Database.Database {
         prompt TEXT NOT NULL,
         paused INTEGER NOT NULL DEFAULT 0,
         last_run DATETIME,
+        cron_memory TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `);
@@ -294,6 +295,7 @@ export interface CronRow {
   prompt: string;
   paused: number;
   last_run: string | null;
+  cron_memory: string | null;
   created_at: string;
 }
 
@@ -360,6 +362,18 @@ export function updateCronSchedule(id: number, chatId: number, scheduleDescripti
 export function updateCronLastRun(id: number): void {
   const db = getDb();
   db.prepare(`UPDATE crons SET last_run = CURRENT_TIMESTAMP WHERE id = ?`).run(id);
+}
+
+/** Update the memory snapshot for a cron (set by post-run haiku summarisation). */
+export function updateCronMemory(id: number, memory: string): void {
+  const db = getDb();
+  db.prepare(`UPDATE crons SET cron_memory = ? WHERE id = ?`).run(memory, id);
+}
+
+/** Clear the memory snapshot for a cron. */
+export function clearCronMemory(id: number): void {
+  const db = getDb();
+  db.prepare(`UPDATE crons SET cron_memory = NULL WHERE id = ?`).run(id);
 }
 
 export function closeDb(): void {

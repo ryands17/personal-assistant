@@ -2,7 +2,7 @@ import { Bot, type Context } from "grammy";
 import { config, persistModel } from "../config.js";
 import { sendToOrchestrator, cancelCurrentMessage, getWorkers, getLastRouteResult, destroyGroupSession } from "../copilot/orchestrator.js";
 import { chunkMessage, toTelegramMarkdown } from "./formatter.js";
-import { searchMemories, isGroupAllowed, addGroupAllowlist, removeGroupAllowlist, getGroupAllowlist, setGroupGoal, getGroupGoal, setGroupModel, getGroupModel, createCron, getCrons, getCronById, deleteCron, setCronPaused, updateCronPrompt, updateCronSchedule } from "../store/db.js";
+import { searchMemories, isGroupAllowed, addGroupAllowlist, removeGroupAllowlist, getGroupAllowlist, setGroupGoal, getGroupGoal, setGroupModel, getGroupModel, createCron, getCrons, getCronById, deleteCron, setCronPaused, updateCronPrompt, updateCronSchedule, clearCronMemory } from "../store/db.js";
 import { listSkills } from "../copilot/skills.js";
 import { restartDaemon } from "../daemon.js";
 import * as cronScheduler from "../cron/scheduler.js";
@@ -317,7 +317,8 @@ export function createBot(): Bot {
         const nextLine = nextRun ? `  ⏭ Next:  ${fmt(nextRun)}` : "";
         const prevLine = prevRun && !isNaN(prevRun.getTime()) ? `  ⏮ Last:  ${fmt(prevRun)}` : "";
         // Plain text — no parse_mode to avoid Markdown injection from user-provided prompts/schedules
-        return `#${r.id} [${status}] ${r.cron_expression}\n  📋 ${r.schedule_description}\n  💬 ${r.prompt.slice(0, 80)}${r.prompt.length > 80 ? "…" : ""}${nextLine ? `\n${nextLine}` : ""}${prevLine ? `\n${prevLine}` : ""}`;
+        const memoryLine = r.cron_memory ? `\n  🧠 Memory: ${r.cron_memory.slice(0, 60)}${r.cron_memory.length > 60 ? "…" : ""}` : "";
+        return `#${r.id} [${status}] ${r.cron_expression}\n  📋 ${r.schedule_description}\n  💬 ${r.prompt.slice(0, 80)}${r.prompt.length > 80 ? "…" : ""}${nextLine ? `\n${nextLine}` : ""}${prevLine ? `\n${prevLine}` : ""}${memoryLine}`;
       });
       await ctx.reply(`Crons for this chat:\n\n${lines.join("\n\n")}`);
       return;
@@ -384,6 +385,46 @@ export function createBot(): Bot {
       }
 
       await ctx.reply("Field must be `prompt` or `schedule`.", { parse_mode: "Markdown" });
+      return;
+    }
+
+    // /cron memory <id>         — show current memory for a cron
+    // /cron memory clear <id>   — wipe the memory for a cron
+    if (subcommand === "memory") {
+      const subAction = rest[0] ?? "";
+      if (subAction === "clear") {
+        const id = parseInt(rest[1] ?? "", 10);
+        if (isNaN(id)) {
+          await ctx.reply("Usage: /cron memory clear <id>");
+          return;
+        }
+        const row = getCronById(id);
+        // Scope to this chat — don't allow cross-chat access
+        if (!row || row.chat_id !== chatId) {
+          await ctx.reply(`Cron #${id} not found.`);
+          return;
+        }
+        clearCronMemory(id);
+        await ctx.reply(`🧠 Memory cleared for cron #${id}.`);
+        return;
+      }
+
+      const id = parseInt(subAction, 10);
+      if (isNaN(id)) {
+        await ctx.reply("Usage:\n  /cron memory <id>         — show memory\n  /cron memory clear <id>   — wipe memory");
+        return;
+      }
+      const row = getCronById(id);
+      // Scope to this chat — don't allow cross-chat access
+      if (!row || row.chat_id !== chatId) {
+        await ctx.reply(`Cron #${id} not found.`);
+        return;
+      }
+      if (!row.cron_memory) {
+        await ctx.reply(`Cron #${id} has no memory yet. Add [memory] to its prompt to enable memory.`);
+        return;
+      }
+      await ctx.reply(`🧠 Memory for cron #${id}:\n\n${row.cron_memory}`);
       return;
     }
 

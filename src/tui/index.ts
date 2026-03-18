@@ -892,7 +892,9 @@ function cmdCron(arg: string): void {
       console.log();
       for (const c of crons) {
         const status = c.paused ? C.yellow("⏸ paused") : C.green("▶ active");
-        console.log(`  ${C.coral(`#${c.id}`)}  ${status}   ${C.dim(c.cron_expression)}   chat:${c.chat_id}`);
+        const hasMemory = typeof c.prompt === "string" && c.prompt.includes("[memory]");
+        const memoryIndicator = hasMemory ? ` ${C.dim("🧠")}` : "";
+        console.log(`  ${C.coral(`#${c.id}`)}  ${status}${memoryIndicator}   ${C.dim(c.cron_expression)}   chat:${c.chat_id}`);
         console.log(`      ${C.dim(c.schedule_description)}`);
         console.log(`      ${c.prompt.slice(0, 80)}${c.prompt.length > 80 ? "…" : ""}`);
         if (c.next_run) {
@@ -903,6 +905,11 @@ function cmdCron(arg: string): void {
           const prev = new Date(c.last_run as string);
           console.log(`      ${C.dim("⏮ Last:")}  ${prev.toLocaleString()}`);
         }
+        if (c.cron_memory) {
+          const preview = (c.cron_memory as string).slice(0, 80);
+          const ellipsis = (c.cron_memory as string).length > 80 ? "…" : "";
+          console.log(`      ${C.dim("🧠 Memory:")} ${preview}${ellipsis}`);
+        }
         console.log();
       }
     });
@@ -910,6 +917,36 @@ function cmdCron(arg: string): void {
   }
 
   const id = parseInt(rest[0] ?? "", 10);
+
+  if (sub === "memory") {
+    const subAction = rest[0] ?? "";
+    if (subAction === "clear") {
+      const memId = parseInt(rest[1] ?? "", 10);
+      if (isNaN(memId)) { console.log(C.dim("  Usage: /cron memory clear <id>\n")); rl.prompt(); return; }
+      apiDelete(`/crons/${memId}/memory`, (data: any) => {
+        if (data?.error) { console.log(C.red(`  Error: ${data.error}\n`)); return; }
+        console.log(C.dim(`  🧠 Memory cleared for cron #${memId}.\n`));
+      });
+      return;
+    }
+    const memId = parseInt(subAction, 10);
+    if (isNaN(memId)) { console.log(C.dim("  Usage:\n    /cron memory <id>         — show memory\n    /cron memory clear <id>   — wipe memory\n")); rl.prompt(); return; }
+    apiGet(`/crons`, (crons: any) => {
+      if (!Array.isArray(crons)) { console.log(C.red(`  Error fetching crons\n`)); return; }
+      const c = crons.find((x: any) => x.id === memId);
+      if (!c) { console.log(C.dim(`  Cron #${memId} not found.\n`)); return; }
+      if (!c.cron_memory) {
+        console.log(C.dim(`  Cron #${memId} has no memory yet. Add [memory] to its prompt to enable memory.\n`));
+      } else {
+        console.log();
+        console.log(C.boldWhite(`  🧠 MEMORY — Cron #${memId}`));
+        console.log();
+        console.log(`  ${(c.cron_memory as string).split("\n").join("\n  ")}`);
+        console.log();
+      }
+    });
+    return;
+  }
 
   if (sub === "edit") {
     const id = parseInt(rest[0] ?? "", 10);
